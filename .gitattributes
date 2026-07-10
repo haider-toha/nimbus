@@ -1,0 +1,10 @@
+# Keep LF line endings in the repo so Mac/Linux/Windows copies
+# don't show every file as modified after unzip or copy-paste.
+* text=auto eol=lf
+
+# Binary assets — do not normalize line endings
+*.bin binary
+*.jpeg binary
+*.jpg binary
+*.png binary
+*.gif binary
