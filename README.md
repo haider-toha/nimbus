@@ -1,6 +1,6 @@
 # Nimbus
 
-A cute little LED flight tracker for your wall. Shows live info for planes
+A LED flight tracker for your wall. Shows live info for planes
 overhead on a single 128×64 HUB75 panel driven by an Adafruit MatrixPortal S3.
 
 ## Components
