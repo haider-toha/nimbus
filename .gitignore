@@ -4,3 +4,7 @@ misc
 firmware/.pio
 firmware/config/WiFiSecrets.h
 plan/
+.claude/
+skills-lock.json
+audit/
+simulator/
