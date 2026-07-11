@@ -43,7 +43,7 @@ String pathEncode(const String &value)
 
 String getString(const JsonObjectConst &object, const char *key)
 {
-    const char *value = object[key] | nullptr;
+    const char *value = object[key] | static_cast<const char *>(nullptr);
     return value == nullptr ? String() : String(value);
 }
 
@@ -56,6 +56,7 @@ RequestResult getJson(const String &url, JsonDocument &document)
 {
     WiFiClientSecure client;
     client.setInsecure();
+    client.setHandshakeTimeout(30);
 
     HTTPClient http;
     http.begin(client, url);
@@ -75,8 +76,15 @@ RequestResult getJson(const String &url, JsonDocument &document)
         return RequestResult::Failed;
     }
 
-    const DeserializationError error = deserializeJson(document, http.getStream());
+    const String body = http.getString();
     http.end();
+
+    // [DIAG] temporary on-device instrumentation (Phase 1). Remove after diagnosis.
+    Serial.printf("AdsbdbFetcher: DIAG status=%d len=%u url=%s\n",
+                  statusCode, (unsigned)body.length(), url.c_str());
+    Serial.printf("AdsbdbFetcher: DIAG body=%.160s\n", body.c_str());
+
+    const DeserializationError error = deserializeJson(document, body);
     if (error)
     {
         Serial.printf("AdsbdbFetcher: JSON parsing failed: %s\n", error.c_str());
@@ -102,6 +110,11 @@ bool fetchRoute(const String &callsign, FlightInfo &flight)
     }
 
     const JsonObjectConst route = document["response"]["flightroute"].as<JsonObjectConst>();
+    // [DIAG] temporary on-device instrumentation (Phase 1). Remove after diagnosis.
+    Serial.printf("AdsbdbFetcher: DIAG route cs=%s routeNull=%d airlineNull=%d rc='%s'\n",
+                  callsign.c_str(), (int)route.isNull(),
+                  (int)route["airline"].isNull(),
+                  (route["callsign"] | ""));
     if (route.isNull())
     {
         return false;
@@ -118,6 +131,8 @@ bool fetchRoute(const String &callsign, FlightInfo &flight)
         flight.operator_icao = getString(airline, "icao");
         flight.operator_iata = getString(airline, "iata");
         flight.airline_display_name_full = flight.operator_code;
+        flight.airline_callsign = getString(airline, "callsign");
+        flight.airline_country = getString(airline, "country");
     }
 
     const JsonObjectConst origin = route["origin"].as<JsonObjectConst>();
@@ -127,6 +142,7 @@ bool fetchRoute(const String &callsign, FlightInfo &flight)
         flight.origin.code_iata = getString(origin, "iata_code");
         flight.origin.name = getString(origin, "name");
         flight.origin.municipality = getString(origin, "municipality");
+        flight.origin.country = getString(origin, "country_name");
         flight.origin.latitude = getDouble(origin, "latitude");
         flight.origin.longitude = getDouble(origin, "longitude");
     }
@@ -138,6 +154,7 @@ bool fetchRoute(const String &callsign, FlightInfo &flight)
         flight.destination.code_iata = getString(destination, "iata_code");
         flight.destination.name = getString(destination, "name");
         flight.destination.municipality = getString(destination, "municipality");
+        flight.destination.country = getString(destination, "country_name");
         flight.destination.latitude = getDouble(destination, "latitude");
         flight.destination.longitude = getDouble(destination, "longitude");
     }
@@ -178,6 +195,9 @@ bool fetchAircraft(const String &icao24Hex, FlightInfo &flight)
             aircraft,
             "registered_owner_operator_flag_code");
     }
+    flight.registration = getString(aircraft, "registration");
+    flight.aircraft_manufacturer = getString(aircraft, "manufacturer");
+    flight.registered_owner = getString(aircraft, "registered_owner");
 
     return true;
 }

@@ -1,10 +1,13 @@
 #include "adapters/Hub75Display.h"
 
 #include <math.h>
+#include <string.h>
 #include "assets/AirlineLogoLibrary.h"
 #include "config/HardwareConfiguration.h"
 #include "config/TimingConfiguration.h"
 #include "config/UserConfiguration.h"
+#include "core/FlightMessages.h"
+#include "core/FlightText.h"
 
 namespace
 {
@@ -13,7 +16,20 @@ constexpr int CHARACTER_HEIGHT = 8;
 constexpr int LOGO_X = 2;
 constexpr int LOGO_Y = 1;
 constexpr int TOP_TEXT_X = 42;
-constexpr double DEGREES_TO_RADIANS = 0.017453292519943295;
+// Topmost bottom-block text line (see displaySingleFlightCard's rotating
+// message pair). WS4's logo cell is sized against this staying put.
+constexpr int BOTTOM_TEXT_Y = 31;
+
+// WS4 (bigger per-airline logos): the logo cell must not run into either
+// text zone. Enforced at compile time -- rather than only by a runtime QA
+// check -- so a future logo-size or text-position change that breaks this
+// fails the build instead of silently overlapping on the panel.
+static_assert(
+    LOGO_X + AirlineLogoLibrary::LOGO_WIDTH <= TOP_TEXT_X,
+    "airline logo cell must not overlap the top-right text column");
+static_assert(
+    LOGO_Y + AirlineLogoLibrary::LOGO_HEIGHT <= BOTTOM_TEXT_Y,
+    "airline logo cell must not overlap the bottom message block");
 }
 
 Hub75Display::Hub75Display()
@@ -61,122 +77,6 @@ uint16_t Hub75Display::textColor()
     const uint8_t green = UserConfiguration::TEXT_COLOR_G * brightness / 255;
     const uint8_t blue = UserConfiguration::TEXT_COLOR_B * brightness / 255;
     return _matrix.color565(red, green, blue);
-}
-
-String Hub75Display::truncateToColumns(const String &text, int maxColumns)
-{
-    if (static_cast<int>(text.length()) <= maxColumns)
-    {
-        return text;
-    }
-    if (maxColumns <= 3)
-    {
-        return text.substring(0, maxColumns);
-    }
-    return text.substring(0, maxColumns - 3) + "...";
-}
-
-String Hub75Display::formatAltitude(const FlightInfo &flight)
-{
-    if (flight.on_ground)
-    {
-        return "GND";
-    }
-    if (isnan(flight.altitude_ft))
-    {
-        return "";
-    }
-    return String(static_cast<long>(round(flight.altitude_ft))) + "FT";
-}
-
-String Hub75Display::formatRoute(const FlightInfo &flight)
-{
-    const String origin = !flight.origin.code_iata.isEmpty()
-                              ? flight.origin.code_iata
-                              : flight.origin.code_icao;
-    const String destination = !flight.destination.code_iata.isEmpty()
-                                   ? flight.destination.code_iata
-                                   : flight.destination.code_icao;
-    if (origin.isEmpty())
-    {
-        return destination;
-    }
-    if (destination.isEmpty())
-    {
-        return origin;
-    }
-    return origin + "-" + destination;
-}
-
-String Hub75Display::formatAirportName(const AirportInfo &airport)
-{
-    String name = airport.name;
-    if (name.isEmpty())
-    {
-        name = airport.municipality;
-    }
-    name.replace(" International Airport", " Intl");
-    name.replace(" International", " Intl");
-    name.replace(" Airport", "");
-    return name;
-}
-
-double Hub75Display::distanceFromCenterSquared(const AirportInfo &airport)
-{
-    if (isnan(airport.latitude) || isnan(airport.longitude))
-    {
-        return NAN;
-    }
-
-    const double latitudeDelta =
-        airport.latitude - UserConfiguration::CENTER_LAT;
-    const double longitudeScale =
-        cos(UserConfiguration::CENTER_LAT * DEGREES_TO_RADIANS);
-    const double longitudeDelta =
-        (airport.longitude - UserConfiguration::CENTER_LON) *
-        longitudeScale;
-    return latitudeDelta * latitudeDelta +
-           longitudeDelta * longitudeDelta;
-}
-
-String Hub75Display::formatContextLabel(const FlightInfo &flight)
-{
-    const double originDistance = distanceFromCenterSquared(flight.origin);
-    const double destinationDistance =
-        distanceFromCenterSquared(flight.destination);
-    if (!isnan(originDistance) && !isnan(destinationDistance))
-    {
-        return destinationDistance < originDistance
-                   ? "Arriving from"
-                   : "Departing to";
-    }
-    if (!flight.origin.name.isEmpty())
-    {
-        return "Arriving from";
-    }
-    if (!flight.destination.name.isEmpty())
-    {
-        return "Departing to";
-    }
-    return "";
-}
-
-String Hub75Display::formatContextAirport(const FlightInfo &flight)
-{
-    const double originDistance = distanceFromCenterSquared(flight.origin);
-    const double destinationDistance =
-        distanceFromCenterSquared(flight.destination);
-    if (!isnan(originDistance) && !isnan(destinationDistance))
-    {
-        return destinationDistance < originDistance
-                   ? formatAirportName(flight.origin)
-                   : formatAirportName(flight.destination);
-    }
-    if (!flight.origin.name.isEmpty())
-    {
-        return formatAirportName(flight.origin);
-    }
-    return formatAirportName(flight.destination);
 }
 
 void Hub75Display::drawAirlineLogo(
@@ -247,19 +147,11 @@ void Hub75Display::displaySingleFlightCard(const FlightInfo &flight)
     String identity = flight.ident.length() > 0
                           ? flight.ident
                           : flight.ident_icao;
-    const String altitude = formatAltitude(flight);
+    const String altitude = FlightText::formatAltitude(flight);
     if (!altitude.isEmpty())
     {
         identity += " ";
         identity += altitude;
-    }
-
-    String airline = flight.airline_display_name_full;
-    if (airline.isEmpty())
-    {
-        airline = !flight.operator_iata.isEmpty()
-                      ? flight.operator_iata
-                      : flight.operator_icao;
     }
 
     const String aircraft = !flight.aircraft_display_name_short.isEmpty()
@@ -269,32 +161,54 @@ void Hub75Display::displaySingleFlightCard(const FlightInfo &flight)
     drawTextLine(
         TOP_TEXT_X,
         0,
-        truncateToColumns(airline, topColumns),
+        FlightText::cleanCut(FlightText::airlineLabel(flight), topColumns),
         color);
     drawTextLine(
         TOP_TEXT_X,
         9,
-        truncateToColumns(formatRoute(flight), topColumns),
+        FlightText::truncateToColumns(FlightText::formatRoute(flight), topColumns),
         color);
     drawTextLine(
         TOP_TEXT_X,
         18,
-        truncateToColumns(aircraft, topColumns),
+        FlightText::truncateToColumns(aircraft, topColumns),
         color);
-    drawTextLine(
-        2,
-        31,
-        truncateToColumns(formatContextLabel(flight), fullColumns),
-        color);
-    drawTextLine(
-        2,
-        40,
-        truncateToColumns(formatContextAirport(flight), fullColumns),
-        color);
+
+    // Bottom block: two rotating message lines (BOTTOM_TEXT_Y, y=40) + the
+    // identity anchor (y=53). BOTTOM_TEXT_Y is intentionally left as the
+    // topmost bottom line -- WS4's logo-height ceiling depends on it
+    // staying put, and the static_assert above turns a future violation
+    // into a build failure instead of a silent overlap.
+    const std::vector<FlightMessage> messages = FlightMessages::build(flight);
+    const bool emergencyActive =
+        !messages.empty() && strcmp(messages[0].type, "emergency") == 0;
+
+    String slotA;
+    String slotB;
+    if (!messages.empty())
+    {
+        if (emergencyActive)
+        {
+            // Emergency always wins: slots are pinned to the emergency pair,
+            // never rotated away regardless of _messageIndex.
+            slotA = messages[0].text;
+            slotB = messages.size() > 1 ? messages[1].text : String();
+        }
+        else
+        {
+            slotA = messages[_messageIndex % messages.size()].text;
+            slotB = messages.size() > 1
+                        ? messages[(_messageIndex + 1) % messages.size()].text
+                        : String();
+        }
+    }
+
+    drawTextLine(2, BOTTOM_TEXT_Y, FlightText::cleanCut(slotA, fullColumns), color);
+    drawTextLine(2, 40, FlightText::cleanCut(slotB, fullColumns), color);
     drawTextLine(
         2,
         53,
-        truncateToColumns(identity, fullColumns),
+        FlightText::truncateToColumns(identity, fullColumns),
         color);
 }
 
@@ -311,14 +225,22 @@ void Hub75Display::displayFlights(const std::vector<FlightInfo> &flights)
     const unsigned long now = millis();
     const unsigned long intervalMs =
         TimingConfiguration::DISPLAY_CYCLE_SECONDS * 1000UL;
+    // The message index advances on this tick regardless of flight count --
+    // a single tracked flight still rotates its bottom-message pair. Flight
+    // cycling itself is unchanged: it only advances (and only exists) when
+    // there is more than one flight to cycle through.
+    if (now - _lastCycleMs >= intervalMs)
+    {
+        _lastCycleMs = now;
+        ++_messageIndex;
+        if (flights.size() > 1)
+        {
+            _currentFlightIndex = (_currentFlightIndex + 1) % flights.size();
+        }
+    }
     if (flights.size() == 1)
     {
         _currentFlightIndex = 0;
-    }
-    else if (now - _lastCycleMs >= intervalMs)
-    {
-        _lastCycleMs = now;
-        _currentFlightIndex = (_currentFlightIndex + 1) % flights.size();
     }
 
     displaySingleFlightCard(flights[_currentFlightIndex % flights.size()]);
@@ -346,7 +268,7 @@ void Hub75Display::displayMessage(const String &message)
     _matrix.fillScreen(0);
     const int maxColumns =
         HardwareConfiguration::PANEL_WIDTH / CHARACTER_WIDTH;
-    const String line = truncateToColumns(message, maxColumns);
+    const String line = FlightText::truncateToColumns(message, maxColumns);
     const int16_t y =
         (HardwareConfiguration::PANEL_HEIGHT - CHARACTER_HEIGHT) / 2;
     drawTextLine(0, y, line, textColor());

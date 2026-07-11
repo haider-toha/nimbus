@@ -1,0 +1,16 @@
+# Custom 8MB partition table for Nimbus (Adafruit MatrixPortal ESP32-S3, TinyUF2).
+#
+# Based on the board's stock partitions-8MB-tinyuf2.csv, but the two 2MB OTA app
+# slots (ota_0 + ota_1) are merged into a single 4MB app partition so the
+# firmware fits: the WS4 40x30 logo blob grew the image to ~2.16MB, past the
+# stock 2MB app slot. OTA is dropped (this display is flashed over USB, not
+# over-the-air). The TinyUF2 `uf2` factory partition and the `ffat` filesystem
+# are kept at their EXACT original offsets/sizes so UF2 drag-drop flashing and
+# the USB mass-storage drive still work.
+#
+# Name,   Type, SubType,  Offset,   Size,      Flags
+nvs,      data, nvs,      0x9000,   0x5000,
+otadata,  data, ota,      0xe000,   0x2000,
+app0,     app,  ota_0,    0x10000,  0x400000,
+uf2,      app,  factory,  0x410000, 0x40000,
+ffat,     data, fat,      0x450000, 0x3B0000,

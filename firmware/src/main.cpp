@@ -18,6 +18,36 @@ static unsigned long g_lastFetchMs = 0;
 static unsigned long g_lastDisplayMs = 0;
 static bool g_hasFetched = false;
 
+static bool ensureWiFi()
+{
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        return true;
+    }
+    if (strlen(WiFiConfiguration::WIFI_SSID) == 0)
+    {
+        return false;
+    }
+
+    Serial.printf("WiFi connecting to \"%s\"...\n", WiFiConfiguration::WIFI_SSID);
+    WiFi.disconnect();
+    WiFi.begin(WiFiConfiguration::WIFI_SSID, WiFiConfiguration::WIFI_PASSWORD);
+
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 50)
+    {
+        delay(200);
+        attempts++;
+    }
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        Serial.printf("WiFi connected: %s\n", WiFi.localIP().toString().c_str());
+        return true;
+    }
+    Serial.printf("WiFi failed (status %d)\n", WiFi.status());
+    return false;
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -29,29 +59,20 @@ void setup()
     if (strlen(WiFiConfiguration::WIFI_SSID) > 0)
     {
         WiFi.mode(WIFI_STA);
+        WiFi.setAutoReconnect(true);
         g_display.displayMessage(String("WiFi: ") + WiFiConfiguration::WIFI_SSID);
-        WiFi.begin(WiFiConfiguration::WIFI_SSID, WiFiConfiguration::WIFI_PASSWORD);
-        Serial.print("Connecting to WiFi");
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 50)
+
+        if (ensureWiFi())
         {
-            delay(200);
-            Serial.print(".");
-            attempts++;
-        }
-        Serial.println();
-        if (WiFi.status() == WL_CONNECTED)
-        {
-            Serial.print("WiFi connected: ");
-            Serial.println(WiFi.localIP());
             g_display.displayMessage(String("WiFi OK ") + WiFi.localIP().toString());
             delay(3000);
             g_display.showLoading();
         }
         else
         {
-            Serial.println("WiFi not connected; proceeding without network");
             g_display.displayMessage(String("WiFi FAIL"));
+            delay(2000);
+            g_display.showLoading();
         }
     }
 }
@@ -67,6 +88,12 @@ void loop()
     {
         g_hasFetched = true;
         g_lastFetchMs = now;
+
+        if (!ensureWiFi())
+        {
+            Serial.println("WiFi not available, skipping fetch");
+            return;
+        }
 
         std::vector<StateVector> states;
         size_t enriched = g_fetcher.fetchFlights(states, g_flights);

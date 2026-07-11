@@ -46,8 +46,13 @@ bool AirplanesLiveFetcher::fetchStateVectors(
                        "/" + String(centerLon, 6) +
                        "/" + String(radiusNm, 2);
 
+    Serial.printf("AirplanesLiveFetcher: free heap %u, largest block %u\n",
+                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    Serial.printf("AirplanesLiveFetcher: URL %s\n", url.c_str());
+
     WiFiClientSecure client;
     client.setInsecure();
+    client.setHandshakeTimeout(30);
 
     HTTPClient http;
     http.begin(client, url);
@@ -57,7 +62,8 @@ bool AirplanesLiveFetcher::fetchStateVectors(
     const int statusCode = http.GET();
     if (statusCode != HTTP_CODE_OK)
     {
-        Serial.printf("AirplanesLiveFetcher: HTTP request failed with code %d\n", statusCode);
+        Serial.printf("AirplanesLiveFetcher: HTTP %d, WiFi=%d\n",
+                       statusCode, WiFi.status());
         http.end();
         return false;
     }
@@ -72,6 +78,14 @@ bool AirplanesLiveFetcher::fetchStateVectors(
     filter["ac"][0]["seen_pos"] = true;
     filter["ac"][0]["dst"] = true;
     filter["ac"][0]["dir"] = true;
+    filter["ac"][0]["gs"] = true;
+    filter["ac"][0]["baro_rate"] = true;
+    filter["ac"][0]["track"] = true;
+    filter["ac"][0]["squawk"] = true;
+    filter["ac"][0]["emergency"] = true;
+    filter["ac"][0]["category"] = true;
+    filter["ac"][0]["r"] = true;
+    filter["ac"][0]["desc"] = true;
 
     JsonDocument doc;
     const DeserializationError error = deserializeJson(
@@ -139,6 +153,23 @@ bool AirplanesLiveFetcher::fetchStateVectors(
         {
             state.bearing_deg = entry["dir"].as<double>();
         }
+        if (!entry["gs"].isNull())
+        {
+            state.ground_speed_kt = entry["gs"].as<double>();
+        }
+        if (!entry["baro_rate"].isNull())
+        {
+            state.vertical_rate_fpm = entry["baro_rate"].as<double>();
+        }
+        if (!entry["track"].isNull())
+        {
+            state.track_deg = entry["track"].as<double>();
+        }
+        state.squawk = String(entry["squawk"] | "");
+        state.emergency = String(entry["emergency"] | "");
+        state.category = String(entry["category"] | "");
+        state.registration = String(entry["r"] | "");
+        state.aircraft_full_type = String(entry["desc"] | "");
 
         outStateVectors.push_back(state);
     }

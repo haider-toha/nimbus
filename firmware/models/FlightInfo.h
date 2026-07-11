@@ -27,4 +27,22 @@ struct FlightInfo
     // Human-friendly display strings
     String airline_display_name_full;
     String aircraft_display_name_short;
+
+    // enrichment (adsbdb)
+    String registration;
+    String aircraft_manufacturer;
+    String aircraft_full_type;
+    String registered_owner;
+    String airline_callsign;
+    String airline_country;
+
+    // live (airplanes.live, copied from StateVector for message rendering)
+    double ground_speed_kt = NAN;
+    double vertical_rate_fpm = NAN;
+    double track_deg = NAN;
+    String squawk;
+    String emergency;
+    String category;
+    double distance_km = NAN;
+    double bearing_deg = NAN;
 };
