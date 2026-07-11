@@ -1,12 +1,18 @@
 # Nimbus
 
-A LED flight tracker for your wall. Shows live info for planes overhead on a
-single 128×64 HUB75 panel driven by an Adafruit MatrixPortal S3.
+A DIY LED flight tracker for your wall. Live aircraft overhead on a single
+128×64 HUB75 panel driven by an Adafruit MatrixPortal S3 — free data, no
+accounts, near-zero soldering.
+
+**Status:** first light works on hardware. Nearby airplanes.live traffic
+renders on the panel. Route/operator enrichment, flicker diagnosis, adaptive
+sparse-card layout, desktop simulator, and enclosure CAD are still open.
+See [plan/flight-tracker-handoff-v3.md](plan/flight-tracker-handoff-v3.md) for
+the running handoff.
 
 ## What it shows
 
-Each flight card is split into a fixed top section and a rotating bottom
-section:
+Each flight card:
 
 - **Left:** a 40×30 color airline logo (502 airlines bundled in firmware,
   looked up by IATA code)
@@ -14,65 +20,64 @@ section:
 - **Bottom:** two message lines that rotate every few seconds, plus a fixed
   callsign/altitude line at the very bottom
 
-The rotating messages are built from whatever data is available for that
-flight — route cities, arrival/departure context, altitude, climb/descent,
-speed, distance and bearing, registration, callsign, squawk, and more.
-Emergency squawks (7500/7600/7700) pin an `EMERGENCY` message pair and
-override rotation.
+Rotating messages use whatever fields are available — route cities,
+arrival/departure context, altitude, climb/descent, speed, distance and
+bearing, registration, callsign, squawk, and more. Emergency squawks
+(7500/7600/7700) pin an `EMERGENCY` pair and stop rotation.
 
 When several aircraft are in range, the display cycles between them on the
-same interval. With `COMMERCIAL_FLIGHTS_ONLY` enabled (the default), only
-large and heavy jets are tracked so the panel focuses on airline traffic.
+same interval. With `REQUIRE_AIRLINE_LOGO` enabled (the default), only
+callsigns whose airline prefix maps to a bundled logo are tracked.
 
 ## Components
 
-- One 128×64 HUB75E RGB panel with an FM6124 driver
+- One 128×64 HUB75E RGB panel with an FM6124 driver (e.g. K580-32S-128×64)
 - Adafruit MatrixPortal S3
-- Regulated 5 V panel power supply
+- Regulated 5 V / 8 A panel supply (DC5525 → panel power header)
 - USB-C cable for programming
 - [airplanes.live](https://airplanes.live/) for nearby aircraft positions
 - [adsbdb](https://www.adsbdb.com/) for route, airline and aircraft data
 
 ## Hardware
 
-Connect the MatrixPortal S3 to the panel's HUB75 **input** connector. Connect
-the panel supply directly to the panel: red to +5 V and black to ground.
-Do not power a bright panel through USB alone.
+Connect the MatrixPortal S3 to the panel's HUB75 **input** (J1). Connect the
+5 V supply directly to the panel: **red → +5 V, black → GND**. Tie panel and
+MatrixPortal grounds together. Do not feed external power into the
+MatrixPortal screw terminals, and do not run a bright panel on USB alone —
+USB bench tests need low brightness (~20–40 of 255).
 
-The 64-row panel requires the HUB75 E address line. If only half the rows
-appear, verify the MatrixPortal S3 E-line jumper position and ribbon-cable
-orientation.
+The 64-row panel needs the HUB75 E address line. If only half the rows
+appear, check the MatrixPortal S3 E-line jumper and ribbon orientation.
 
 ## Data
 
-The firmware uses free, no-account endpoints:
+No API keys, accounts, or payment cards:
 
 1. **airplanes.live** — position, callsign, altitude, ground speed, vertical
-   rate, track, squawk, emergency state, emitter category, registration, and
-   aircraft type description
-2. **adsbdb** — route, airline metadata, airport details, aircraft
-   manufacturer, registered owner, and human-readable aircraft names
+   rate, track, squawk, emergency, emitter category, registration, type,
+   distance and bearing (≤1 req/sec; radius converted km→nm internally)
+2. **adsbdb** — route, airline, airports, manufacturer, owner, and
+   human-readable aircraft names (404-safe when unknown)
 
-No API keys, accounts or payment cards are required. Color airline logos are
-bundled into the firmware and require no runtime CDN or logo service.
+Color airline logos are bundled into the firmware — no runtime CDN.
 
-WiFi reconnects automatically before each fetch. If the network is down, the
-device skips the fetch and keeps showing the last known flights.
+WiFi reconnects before each fetch. If the network is down, the device skips
+the fetch and keeps showing the last known flights.
 
 ## Configuration
 
-Copy `firmware/config/WiFiSecrets.example.h` to `WiFiSecrets.h` and enter the
-2.4 GHz network locally. The secrets file is gitignored. ESP32-S3 cannot
-connect to a 5 GHz-only hotspot.
+Copy `firmware/config/WiFiSecrets.example.h` to `WiFiSecrets.h` and enter a
+**2.4 GHz** network locally (ESP32-S3 cannot see 5 GHz-only hotspots). The
+secrets file is gitignored.
 
 Update [UserConfiguration.h](firmware/config/UserConfiguration.h):
 
 | Setting | Purpose |
 | --- | --- |
 | `CENTER_LAT` / `CENTER_LON` | Tracking center (defaults to central London) |
-| `RADIUS_KM` | Search radius in kilometers |
+| `RADIUS_KM` | Search radius in kilometers (defaults to 100 km) |
 | `MAX_TRACKED_FLIGHTS` | Nearest aircraft to enrich and display |
-| `COMMERCIAL_FLIGHTS_ONLY` | Skip light aircraft, helicopters, drones, etc. |
+| `REQUIRE_AIRLINE_LOGO` | Show only callsigns mapped to a bundled airline logo |
 | `DISPLAY_BRIGHTNESS` | Panel brightness 0–255; use 20–40 for USB bench tests |
 | `TEXT_COLOR_R/G/B` | Text color on the LED matrix |
 
@@ -90,7 +95,9 @@ firmware/
   models/                   # FlightInfo, StateVector, AirportInfo
   assets/                   # bundled airline logo library (RGB565)
   config/                   # WiFi, location, timing, and hardware settings
-  tools/                    # logo generation script
+  tools/                    # logo generation + host integrity tests
+plan/
+  flight-tracker-handoff-v3.md   # running status and next actions
 ```
 
 ## Build and upload
@@ -105,6 +112,16 @@ The firmware image uses a custom 4 MB app partition to fit the bundled logo
 library while keeping TinyUF2 drag-and-drop flashing. See
 [firmware/README.md](firmware/README.md) for firmware details, partition
 layout, and logo regeneration.
+
+## What's next
+
+Tracked in the [handoff plan](plan/flight-tracker-handoff-v3.md):
+
+- Confirm adsbdb enrichment + logo on a known commercial flight
+- Diagnose flicker (power vs camera vs Protomatter refresh)
+- Adaptive layout when route/logo data is missing
+- Desktop 128×64 simulator and fixture screenshots
+- Enclosure CAD after measuring the panel once
 
 ## Credits
 

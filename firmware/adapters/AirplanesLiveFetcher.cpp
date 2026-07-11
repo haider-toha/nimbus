@@ -105,6 +105,11 @@ bool AirplanesLiveFetcher::fetchStateVectors(
     {
         return true;
     }
+    Serial.printf(
+        "AirplanesLiveFetcher: parsed %u aircraft, free heap %u, largest block %u\n",
+        static_cast<unsigned>(aircraft.size()),
+        ESP.getFreeHeap(),
+        ESP.getMaxAllocHeap());
 
     for (JsonObject entry : aircraft)
     {

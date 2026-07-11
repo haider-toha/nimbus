@@ -30,6 +30,12 @@ static_assert(
 static_assert(
     LOGO_Y + AirlineLogoLibrary::LOGO_HEIGHT <= BOTTOM_TEXT_Y,
     "airline logo cell must not overlap the bottom message block");
+
+uint8_t scaleChannel(uint8_t channel, uint16_t brightness)
+{
+    return static_cast<uint8_t>(
+        (static_cast<uint16_t>(channel) * brightness + 127) / 255);
+}
 }
 
 Hub75Display::Hub75Display()
@@ -73,9 +79,12 @@ void Hub75Display::clear()
 uint16_t Hub75Display::textColor()
 {
     const uint16_t brightness = UserConfiguration::DISPLAY_BRIGHTNESS;
-    const uint8_t red = UserConfiguration::TEXT_COLOR_R * brightness / 255;
-    const uint8_t green = UserConfiguration::TEXT_COLOR_G * brightness / 255;
-    const uint8_t blue = UserConfiguration::TEXT_COLOR_B * brightness / 255;
+    const uint8_t red =
+        scaleChannel(UserConfiguration::TEXT_COLOR_R, brightness);
+    const uint8_t green =
+        scaleChannel(UserConfiguration::TEXT_COLOR_G, brightness);
+    const uint8_t blue =
+        scaleChannel(UserConfiguration::TEXT_COLOR_B, brightness);
     return _matrix.color565(red, green, blue);
 }
 
@@ -84,7 +93,7 @@ void Hub75Display::drawAirlineLogo(
     int16_t x,
     int16_t y)
 {
-    const uint16_t *logo =
+    const uint8_t *logo =
         AirlineLogoLibrary::findByIata(flight.operator_iata);
     if (logo == nullptr)
     {
@@ -98,26 +107,29 @@ void Hub75Display::drawAirlineLogo(
              column < AirlineLogoLibrary::LOGO_WIDTH;
              ++column)
         {
+            const size_t pixelIndex =
+                row * AirlineLogoLibrary::LOGO_WIDTH + column;
+            const size_t byteIndex = pixelIndex * 2;
             const uint16_t pixel =
-                logo[row * AirlineLogoLibrary::LOGO_WIDTH + column];
+                static_cast<uint16_t>(logo[byteIndex]) |
+                (static_cast<uint16_t>(logo[byteIndex + 1]) << 8);
             if (pixel == 0)
             {
                 continue;
             }
 
-            const uint8_t red =
-                (((pixel >> 11) & 0x1F) * 255 / 31) *
-                brightness / 255;
-            const uint8_t green =
-                (((pixel >> 5) & 0x3F) * 255 / 63) *
-                brightness / 255;
-            const uint8_t blue =
-                ((pixel & 0x1F) * 255 / 31) *
-                brightness / 255;
+            const uint16_t red =
+                scaleChannel((pixel >> 11) & 0x1F, brightness);
+            const uint16_t green =
+                scaleChannel((pixel >> 5) & 0x3F, brightness);
+            const uint16_t blue =
+                scaleChannel(pixel & 0x1F, brightness);
+            const uint16_t scaledPixel =
+                (red << 11) | (green << 5) | blue;
             _matrix.drawPixel(
                 x + column,
                 y + row,
-                _matrix.color565(red, green, blue));
+                scaledPixel);
         }
     }
 }

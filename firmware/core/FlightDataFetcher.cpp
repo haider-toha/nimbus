@@ -2,18 +2,30 @@
 
 #include <algorithm>
 #include <math.h>
+#include "assets/AirlineLogoLibrary.h"
 #include "config/UserConfiguration.h"
 
 namespace
 {
-bool isCommercialCategory(const String &category)
+String operatorIcaoFromCallsign(const String &callsign)
 {
-    if (category.isEmpty() || category == "A0")
+    String normalized = callsign;
+    normalized.trim();
+    normalized.toUpperCase();
+    if (normalized.length() < 3)
     {
-        return true;
+        return String();
     }
-    return category == "A3" || category == "A4" ||
-           category == "A5" || category == "A6";
+
+    for (size_t index = 0; index < 3; ++index)
+    {
+        const char character = normalized[index];
+        if (character < 'A' || character > 'Z')
+        {
+            return String();
+        }
+    }
+    return normalized.substring(0, 3);
 }
 }
 
@@ -62,19 +74,37 @@ size_t FlightDataFetcher::fetchFlights(std::vector<StateVector> &outStates,
         {
             continue;
         }
-        if (UserConfiguration::COMMERCIAL_FLIGHTS_ONLY &&
-            !isCommercialCategory(s.category))
+
+        const String mappedOperatorIcao =
+            operatorIcaoFromCallsign(s.callsign);
+        const String mappedOperatorIata =
+            AirlineLogoLibrary::findIataByIcao(mappedOperatorIcao);
+        if (UserConfiguration::REQUIRE_AIRLINE_LOGO &&
+            mappedOperatorIata.isEmpty())
         {
             continue;
         }
 
         FlightInfo info;
         info.ident = s.callsign;
+        info.operator_icao = mappedOperatorIcao;
+        info.operator_iata = mappedOperatorIata;
         info.aircraft_code = s.aircraft_code;
         info.altitude_ft = s.baro_altitude_ft;
         info.on_ground = s.on_ground;
 
-        if (_flightFetcher->fetchFlightInfo(s.callsign, s.icao24, info))
+        const bool wasEnriched =
+            _flightFetcher->fetchFlightInfo(s.callsign, s.icao24, info);
+        if (!AirlineLogoLibrary::hasIata(info.operator_iata))
+        {
+            info.operator_iata = mappedOperatorIata;
+        }
+        if (UserConfiguration::REQUIRE_AIRLINE_LOGO &&
+            !AirlineLogoLibrary::hasIata(info.operator_iata))
+        {
+            continue;
+        }
+        if (wasEnriched)
         {
             enriched++;
         }

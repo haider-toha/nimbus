@@ -9,6 +9,8 @@ from __future__ import annotations
 import io
 import json
 import struct
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -31,30 +33,38 @@ LOGO_WIDTH = 40
 LOGO_HEIGHT = 30
 PIXELS_PER_LOGO = LOGO_WIDTH * LOGO_HEIGHT
 BYTES_PER_LOGO = PIXELS_PER_LOGO * 2
+EXPECTED_LOGO_COUNT = 502
+RASTER_SCALE = 4.0
+DISPLAY_BRIGHTNESS = 32
+MIN_RUNTIME_VISIBLE_PIXELS = 12
+VISIBILITY_BRIGHTNESS_FLOOR = 160
 
-# Hub75Display renders at UserConfiguration::DISPLAY_BRIGHTNESS = 32 (out of
-# 255): every stored RGB565 channel is decoded then scaled by ~32/255 before
-# it reaches the panel, so a source pixel whose peak channel is much below
-# this floor decodes to 0 on real hardware.
-#
-# 64 (the floor a simplified post-composite probe found sufficient) turns
-# out to rescue 7G to only ~2 visible pixels in this alpha-aware
-# implementation: 7G's brand color is near-black AND its glyph is thin/
-# detailed enough that downsampling to this cell leaves almost no pixel
-# fully opaque, so most of its content is doubly dimmed (dark color, low
-# alpha) and a low floor barely moves it. Swept 64/96/128/160/200 against
-# the broken set (NZ/7G/HD/PQ) and a diverse sample of already-fine, richly
-# colored airlines (BA/AA/DL/UA/LH/SQ/EK/QF/AF/KE/JL/CX/QR/EY/TK/LX/BR/VS/
-# AC/NH/KL/IB): non_black_px never changes with floor (it only redistributes
-# existing content upward, never fabricates new content), and a rendered
-# side-by-side of the two most floor-sensitive fine logos (LH's dark-navy
-# tail, AA's navy wordmark) is visually indistinguishable across the whole
-# range -- the growth in "runtime-visible" count there is anti-aliased edge
-# pixels crossing the display's own threshold, not a hue/identity shift.
-# 160 sits comfortably below that confirmed-safe range while giving 7G a
-# real (not token) rescue: 40/92 px cross the visibility threshold, versus 2
-# at floor=64.
-CONTENT_BRIGHTNESS_FLOOR = 160
+# These entries exist in the curated manifest but do not have a curated SVG
+# at the pinned revision. NZ is also explicit here because its curated icon
+# is black-on-transparent and cannot be represented when RGB565 zero is the
+# firmware's transparency key. Keeping this list explicit means a transient
+# curated download failure aborts generation instead of silently changing
+# the selected artwork.
+PRIMARY_SOURCE_IATAS = frozenset(
+    {
+        "AK",
+        "AS",
+        "B6",
+        "BI",
+        "BT",
+        "EY",
+        "MM",
+        "NH",
+        "NZ",
+        "QF",
+        "SK",
+        "TR",
+        "TW",
+        "VJ",
+        "W6",
+        "ZD",
+    }
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIRECTORY = PROJECT_ROOT / "assets"
@@ -65,8 +75,15 @@ INDEX_SOURCE_PATH = ASSET_DIRECTORY / "AirlineLogoLibrary.cpp"
 
 def download(url: str) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "Nimbus-logo-builder"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return response.read()
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.read()
+        except (OSError, urllib.error.URLError):
+            if attempt == 3:
+                raise
+            time.sleep(2**attempt)
+    raise RuntimeError("unreachable download retry state")
 
 
 def _crop_to_content(image: Image.Image) -> Image.Image:
@@ -116,28 +133,81 @@ def _apply_brightness_floor(image: Image.Image, floor: int) -> Image.Image:
     return image
 
 
-def render_logo(svg: bytes) -> Image.Image:
-    png = cairosvg.svg2png(bytestring=svg, unsafe=True)
-    logo = Image.open(io.BytesIO(png)).convert("RGBA")
-    logo = _crop_to_content(logo)
-    logo.thumbnail((LOGO_WIDTH, LOGO_HEIGHT), Image.Resampling.LANCZOS)
-    logo = _apply_brightness_floor(logo, CONTENT_BRIGHTNESS_FLOOR)
+def _fit_to_logo_cell(image: Image.Image) -> Image.Image:
+    """Resize content to fill one cell while preserving its aspect ratio."""
+    width, height = image.size
+    if width == 0 or height == 0:
+        return image
+    scale = min(LOGO_WIDTH / width, LOGO_HEIGHT / height)
+    target_size = (
+        max(1, round(width * scale)),
+        max(1, round(height * scale)),
+    )
+    return image.resize(target_size, Image.Resampling.LANCZOS)
 
+
+def _composite_logo(logo: Image.Image) -> Image.Image:
     canvas = Image.new("RGBA", (LOGO_WIDTH, LOGO_HEIGHT), (0, 0, 0, 255))
     position = ((LOGO_WIDTH - logo.width) // 2, (LOGO_HEIGHT - logo.height) // 2)
     canvas.alpha_composite(logo, position)
     return canvas.convert("RGB")
 
 
+def _scale_rgb565_channel(channel: int, brightness: int) -> int:
+    return (channel * brightness + 127) // 255
+
+
+def _runtime_pixel(pixel: int) -> int:
+    red = _scale_rgb565_channel((pixel >> 11) & 0x1F, DISPLAY_BRIGHTNESS)
+    green = _scale_rgb565_channel((pixel >> 5) & 0x3F, DISPLAY_BRIGHTNESS)
+    blue = _scale_rgb565_channel(pixel & 0x1F, DISPLAY_BRIGHTNESS)
+    return (red << 11) | (green << 5) | blue
+
+
+def _runtime_visible_pixels(image: Image.Image) -> int:
+    encoded = rgb565_bytes(image)
+    pixels = struct.iter_unpack("<H", encoded)
+    return sum(_runtime_pixel(pixel[0]) != 0 for pixel in pixels)
+
+
+def render_logo(svg: bytes) -> tuple[Image.Image, bool]:
+    """Render one SVG and selectively rescue content invisible at runtime."""
+    png = cairosvg.svg2png(
+        bytestring=svg,
+        scale=RASTER_SCALE,
+        unsafe=True,
+    )
+    logo = Image.open(io.BytesIO(png)).convert("RGBA")
+    logo = _fit_to_logo_cell(_crop_to_content(logo))
+
+    canvas = _composite_logo(logo)
+    if _runtime_visible_pixels(canvas) >= MIN_RUNTIME_VISIBLE_PIXELS:
+        return canvas, False
+
+    lifted_logo = _apply_brightness_floor(
+        logo.copy(),
+        VISIBILITY_BRIGHTNESS_FLOOR,
+    )
+    return _composite_logo(lifted_logo), True
+
+
 def rgb565_bytes(image: Image.Image) -> bytes:
     encoded = bytearray()
-    for red, green, blue in image.getdata():
-        pixel = ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3)
-        encoded.extend(struct.pack("<H", pixel))
+    pixels = image.load()
+    width, height = image.size
+    for y in range(height):
+        for x in range(width):
+            red, green, blue = pixels[x, y]
+            pixel = (
+                ((red & 0xF8) << 8) |
+                ((green & 0xFC) << 3) |
+                (blue >> 3)
+            )
+            encoded.extend(struct.pack("<H", pixel))
     return bytes(encoded)
 
 
-def write_index(entries: list[tuple[str, int]]) -> None:
+def write_index(entries: list[tuple[str, str, int]]) -> None:
     INDEX_HEADER_PATH.write_text(
         f"""#pragma once
 
@@ -147,15 +217,23 @@ namespace AirlineLogoLibrary
 {{
     static constexpr uint8_t LOGO_WIDTH = {LOGO_WIDTH};
     static constexpr uint8_t LOGO_HEIGHT = {LOGO_HEIGHT};
+    static constexpr size_t PIXELS_PER_LOGO = {PIXELS_PER_LOGO};
+    static constexpr size_t BYTES_PER_LOGO = {BYTES_PER_LOGO};
 
-    const uint16_t *findByIata(const String &iata);
+    const uint8_t *findByIata(const String &iata);
+    bool hasIata(const String &iata);
+    String findIataByIcao(const String &icao);
 }}
 """,
         encoding="utf-8",
     )
 
-    rows = "\n".join(
-        f'    {{"{iata}", {offset}UL}},' for iata, offset in entries
+    iata_rows = "\n".join(
+        f'    {{"{iata}", {offset}UL}},' for iata, _, offset in entries
+    )
+    icao_rows = "\n".join(
+        f'    {{"{icao}", "{iata}"}},'
+        for iata, icao, _ in sorted(entries, key=lambda entry: entry[1])
     )
     INDEX_SOURCE_PATH.write_text(
         f"""#include "assets/AirlineLogoLibrary.h"
@@ -171,22 +249,59 @@ struct LogoIndexEntry
 }};
 
 const LogoIndexEntry LOGO_INDEX[] = {{
-{rows}
+{iata_rows}
+}};
+
+struct AirlineCodeEntry
+{{
+    const char *icao;
+    const char *iata;
+}};
+
+const AirlineCodeEntry AIRLINE_CODE_INDEX[] = {{
+{icao_rows}
 }};
 
 extern const uint8_t LOGO_DATA_START[]
     asm("_binary_assets_airline_logos_bin_start");
+extern const uint8_t LOGO_DATA_END[]
+    asm("_binary_assets_airline_logos_bin_end");
+
+String normalizedCode(const String &value)
+{{
+    String normalized = value;
+    normalized.trim();
+    normalized.toUpperCase();
+    return normalized;
 }}
 
-const uint16_t *AirlineLogoLibrary::findByIata(const String &iata)
+const uint8_t *logoAtOffset(uint32_t offset)
 {{
-    if (iata.length() != 2)
+    const uintptr_t dataStart =
+        reinterpret_cast<uintptr_t>(LOGO_DATA_START);
+    const uintptr_t dataEnd =
+        reinterpret_cast<uintptr_t>(LOGO_DATA_END);
+    if (dataEnd < dataStart)
     {{
         return nullptr;
     }}
+    const size_t dataSize = static_cast<size_t>(dataEnd - dataStart);
+    if (offset > dataSize ||
+        AirlineLogoLibrary::BYTES_PER_LOGO > dataSize - offset)
+    {{
+        return nullptr;
+    }}
+    return reinterpret_cast<const uint8_t *>(dataStart + offset);
+}}
+}}
 
-    String normalized = iata;
-    normalized.toUpperCase();
+const uint8_t *AirlineLogoLibrary::findByIata(const String &iata)
+{{
+    const String normalized = normalizedCode(iata);
+    if (normalized.length() != 2)
+    {{
+        return nullptr;
+    }}
 
     int left = 0;
     int right = static_cast<int>(
@@ -199,8 +314,7 @@ const uint16_t *AirlineLogoLibrary::findByIata(const String &iata)
             LOGO_INDEX[middle].iata);
         if (comparison == 0)
         {{
-            return reinterpret_cast<const uint16_t *>(
-                LOGO_DATA_START + LOGO_INDEX[middle].offset);
+            return logoAtOffset(LOGO_INDEX[middle].offset);
         }}
         if (comparison < 0)
         {{
@@ -213,9 +327,124 @@ const uint16_t *AirlineLogoLibrary::findByIata(const String &iata)
     }}
     return nullptr;
 }}
+
+bool AirlineLogoLibrary::hasIata(const String &iata)
+{{
+    return findByIata(iata) != nullptr;
+}}
+
+String AirlineLogoLibrary::findIataByIcao(const String &icao)
+{{
+    const String normalized = normalizedCode(icao);
+    if (normalized.length() != 3)
+    {{
+        return String();
+    }}
+
+    int left = 0;
+    int right = static_cast<int>(
+        sizeof(AIRLINE_CODE_INDEX) / sizeof(AIRLINE_CODE_INDEX[0])) - 1;
+    while (left <= right)
+    {{
+        const int middle = left + (right - left) / 2;
+        const int comparison = strcmp(
+            normalized.c_str(),
+            AIRLINE_CODE_INDEX[middle].icao);
+        if (comparison == 0)
+        {{
+            return String(AIRLINE_CODE_INDEX[middle].iata);
+        }}
+        if (comparison < 0)
+        {{
+            right = middle - 1;
+        }}
+        else
+        {{
+            left = middle + 1;
+        }}
+    }}
+    return String();
+}}
 """,
         encoding="utf-8",
     )
+
+
+def _airlines_by_iata(airlines: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    icao_codes: set[str] = set()
+    for airline in airlines:
+        iata_value = airline.get("iata")
+        icao_value = airline.get("icao")
+        if not isinstance(iata_value, str) or len(iata_value) != 2:
+            raise ValueError(f"invalid IATA code: {iata_value!r}")
+        if not isinstance(icao_value, str) or len(icao_value) != 3:
+            raise ValueError(f"invalid ICAO code for {iata_value}: {icao_value!r}")
+
+        iata = iata_value.upper()
+        icao = icao_value.upper()
+        if iata in result:
+            raise ValueError(f"duplicate IATA code: {iata}")
+        if icao in icao_codes:
+            raise ValueError(f"duplicate ICAO code: {icao}")
+        result[iata] = airline
+        icao_codes.add(icao)
+
+    if len(result) != EXPECTED_LOGO_COUNT:
+        raise ValueError(
+            f"expected {EXPECTED_LOGO_COUNT} airlines, found {len(result)}"
+        )
+    return result
+
+
+def _download_logo(
+    iata: str,
+    curated_slugs: dict[str, str],
+) -> tuple[bytes, str]:
+    if iata in curated_slugs and iata not in PRIMARY_SOURCE_IATAS:
+        slug = curated_slugs[iata]
+        return (
+            download(f"{CURATED_SOURCE_ROOT}/assets/{slug}/icon.svg"),
+            "curated",
+        )
+    return download(f"{SOURCE_ROOT}/logos/{iata}.svg"), "primary"
+
+
+def _validate_logo(iata: str, canvas: Image.Image) -> None:
+    if canvas.size != (LOGO_WIDTH, LOGO_HEIGHT):
+        raise ValueError(f"unexpected canvas size {canvas.size}")
+    bbox = canvas.getbbox()
+    if bbox is None:
+        raise ValueError("logo has no representable RGB content")
+
+    width = bbox[2] - bbox[0]
+    height = bbox[3] - bbox[1]
+    if width < 4 or height < 3:
+        raise ValueError(f"logo has too little representable content: bbox={bbox}")
+
+    visible_pixels = _runtime_visible_pixels(canvas)
+    if visible_pixels < MIN_RUNTIME_VISIBLE_PIXELS:
+        raise ValueError(
+            f"only {visible_pixels} pixels survive runtime brightness"
+        )
+
+    pixels = canvas.load()
+    colors = [
+        pixels[x, y]
+        for y in range(LOGO_HEIGHT)
+        for x in range(LOGO_WIDTH)
+        if pixels[x, y] != (0, 0, 0)
+    ]
+    if iata == "QR" and not any(
+        red >= 80 and red > blue and blue > green
+        for red, green, blue in colors
+    ):
+        raise ValueError("Qatar logo is missing its burgundy color family")
+    if iata == "VS" and not any(
+        red >= 180 and red > green * 3 and red > blue * 2
+        for red, green, blue in colors
+    ):
+        raise ValueError("Virgin logo is missing its red color family")
 
 
 def main() -> None:
@@ -231,60 +460,43 @@ def main() -> None:
         and len(airline["iata"]) == 2
         and isinstance(airline.get("slug"), str)
     }
-    airlines_by_iata = {
-        airline["iata"].upper(): airline
-        for airline in airlines
-        if isinstance(airline.get("iata"), str) and len(airline["iata"]) == 2
-    }
+    airlines_by_iata = _airlines_by_iata(airlines)
 
-    entries: list[tuple[str, int]] = []
+    entries: list[tuple[str, str, int]] = []
     logo_data = bytearray()
     failures: list[str] = []
     for iata in sorted(airlines_by_iata):
         try:
-            svg = None
-            used_curated = False
-            if iata in curated_slugs:
-                try:
-                    svg = download(
-                        f"{CURATED_SOURCE_ROOT}/assets/"
-                        f"{curated_slugs[iata]}/icon.svg"
-                    )
-                    used_curated = True
-                except Exception:
-                    pass
-            if svg is None:
-                svg = download(f"{SOURCE_ROOT}/logos/{iata}.svg")
-
-            canvas = render_logo(svg)
-            if canvas.getbbox() is None and used_curated:
-                # Curated source produced no visible content (e.g. a
-                # monochrome glyph that composites black-on-black, as with
-                # NZ) -- retry with the primary source, which carries
-                # independent brand-color artwork and isn't subject to the
-                # same failure.
-                svg = download(f"{SOURCE_ROOT}/logos/{iata}.svg")
-                canvas = render_logo(svg)
+            airline = airlines_by_iata[iata]
+            icao = str(airline["icao"]).upper()
+            svg, source = _download_logo(iata, curated_slugs)
+            canvas, brightness_lifted = render_logo(svg)
+            _validate_logo(iata, canvas)
 
             encoded = rgb565_bytes(canvas)
             if len(encoded) != BYTES_PER_LOGO:
                 raise ValueError(f"unexpected encoded size {len(encoded)}")
-            entries.append((iata, len(logo_data)))
+            entries.append((iata, icao, len(logo_data)))
             logo_data.extend(encoded)
-            print(f"generated {iata}")
+            lift_label = ", visibility-lifted" if brightness_lifted else ""
+            print(f"generated {iata} from {source}{lift_label}")
         except Exception as error:
             failures.append(f"{iata}: {error}")
 
+    if failures:
+        raise RuntimeError(
+            f"failed to generate {len(failures)} logos:\n"
+            + "\n".join(failures)
+        )
+    if len(logo_data) != EXPECTED_LOGO_COUNT * BYTES_PER_LOGO:
+        raise RuntimeError(f"unexpected library size {len(logo_data)}")
+
     BINARY_PATH.write_bytes(logo_data)
     write_index(entries)
-
     print(
         f"wrote {len(entries)} logos, {len(logo_data)} bytes "
         f"to {BINARY_PATH.relative_to(PROJECT_ROOT)}"
     )
-    if failures:
-        print(f"skipped {len(failures)} logos:")
-        print("\n".join(failures))
 
 
 if __name__ == "__main__":

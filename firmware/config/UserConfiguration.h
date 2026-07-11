@@ -7,13 +7,12 @@ namespace UserConfiguration
     // Location configuration
     static const double CENTER_LAT = 51.49902401104305;
     static const double CENTER_LON = -0.09823109814490183;
-    static const double RADIUS_KM = 20.0;
+    static const double RADIUS_KM = 100.0;
     static const uint8_t MAX_TRACKED_FLIGHTS = 5;
 
-    // When true, only large/heavy jets (DO-260B categories A3-A6) are
-    // tracked. Light aircraft, helicopters, gliders, drones, and ground
-    // vehicles are skipped so the display shows commercial airline traffic.
-    static const bool COMMERCIAL_FLIGHTS_ONLY = true;
+    // Resolve the three-letter airline prefix in each ADS-B callsign and
+    // display only aircraft whose mapped IATA code has a bundled logo.
+    static const bool REQUIRE_AIRLINE_LOGO = true;
 
     // Display customization
     // Brightness controls overall display brightness (0-255)

@@ -53,7 +53,14 @@ void setup()
     Serial.begin(115200);
     delay(200);
 
-    g_display.initialize();
+    if (!g_display.initialize())
+    {
+        Serial.println("Display initialization failed; firmware halted");
+        while (true)
+        {
+            delay(1000);
+        }
+    }
     g_display.displayMessage(String("Nimbus"));
 
     if (strlen(WiFiConfiguration::WIFI_SSID) > 0)

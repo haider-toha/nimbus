@@ -1,7 +1,8 @@
 # Nimbus Firmware
 
-Firmware for Nimbus — a 128×64 HUB75 flight display driven by an Adafruit
-MatrixPortal S3.
+Firmware for Nimbus — a 128×64 HUB75 flight display on an Adafruit
+MatrixPortal S3. Product status and remaining hardware work live in
+[../plan/flight-tracker-handoff-v3.md](../plan/flight-tracker-handoff-v3.md).
 
 ## Architecture
 
@@ -12,7 +13,7 @@ main.cpp
        └─ AdsbdbFetcher          (route, airline, aircraft enrichment)
   └─ Hub75Display
        ├─ FlightText             (formatting, abbreviations, route labels)
-       └─ FlightMessages         (rotating bottom-message catalog)
+       ├─ FlightMessages         (rotating bottom-message catalog)
        └─ AirlineLogoLibrary     (embedded RGB565 logos)
 ```
 
@@ -21,16 +22,22 @@ main.cpp
 
 ## Data sources
 
-- [airplanes.live](https://airplanes.live/) supplies nearby aircraft
-  positions, callsigns, altitude, ground speed, vertical rate, track,
-  squawk, emergency state, emitter category, registration, and aircraft type.
-- [adsbdb](https://www.adsbdb.com/) supplies routes, airline details,
-  airport metadata, manufacturer, registered owner, and human-readable
-  aircraft names.
+- [airplanes.live](https://airplanes.live/) — nearby aircraft positions,
+  callsigns, altitude, ground speed, vertical rate, track, squawk,
+  emergency, emitter category, registration, type, distance and bearing.
+  Polled ≤1 req/sec; search radius is converted from km to nautical miles
+  inside `AirplanesLiveFetcher`.
+- [adsbdb](https://www.adsbdb.com/) — routes, airline details, airport
+  metadata, manufacturer, registered owner, and human-readable aircraft
+  names. Unknown callsigns/aircraft return 404 and produce partial cards.
 
 None of these services requires an account or API key. Color airline logos
 (40×30, 502 airlines) are bundled into the firmware and looked up by IATA
-code. They require no runtime logo service.
+code. No runtime logo service is used.
+
+When `REQUIRE_AIRLINE_LOGO` is true, `FlightDataFetcher` maps each callsign's
+three-letter ICAO airline prefix to a bundled IATA logo code and skips
+aircraft with no logo match.
 
 ## Display
 
@@ -45,18 +52,25 @@ Messages rotate every `DISPLAY_CYCLE_SECONDS`. Emergency squawks pin an
 `EMERGENCY` pair and stop rotation. When multiple flights are tracked, the
 display cycles between them on the same interval.
 
+Protomatter runs at 4-bit color depth with double buffering so the 128×64
+panel stays stable alongside WiFi. Adaptive sparse-card layout (reclaiming
+logo/route space when enrichment is missing) is still TODO — see the
+handoff plan.
+
 ## Configuration
 
 - Copy `config/WiFiSecrets.example.h` to `config/WiFiSecrets.h`, then enter
-  the 2.4 GHz network. The secrets file is gitignored.
-- Set latitude, longitude, search radius, brightness, commercial-only filter,
+  the **2.4 GHz** network. The secrets file is gitignored.
+- Set latitude, longitude, search radius, brightness, logo-only filter,
   and maximum displayed flights in `config/UserConfiguration.h`.
 - Polling and display-cycle intervals are in `config/TimingConfiguration.h`.
 - HUB75 dimensions and MatrixPortal S3 pins are in
   `config/HardwareConfiguration.h`.
 
-Keep `DISPLAY_BRIGHTNESS` low while the panel is powered only over USB.
-Use the panel's 5 V supply for normal operation.
+Keep `DISPLAY_BRIGHTNESS` low (~20–40 of 255) while the panel is powered only
+over USB. For normal operation, use a regulated 5 V / ~8 A supply connected
+directly to the panel, with a common ground to the MatrixPortal. Do not feed
+external power into the MatrixPortal's output terminals.
 
 ## Build and upload
 
@@ -85,4 +99,12 @@ pinned, licensed sources:
 
 ```bash
 uv run --with cairosvg --with pillow python tools/generate_airline_logos.py
+```
+
+Generation is all-or-nothing: source selection, IATA/ICAO indexes, color
+families, dimensions, offsets, and low-brightness visibility are validated
+before assets are replaced. Run the host integrity tests with:
+
+```bash
+uv run --with cairosvg --with pillow python -m unittest tools/test_airline_logos.py
 ```
