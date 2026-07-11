@@ -1,7 +1,28 @@
 # Nimbus
 
-A LED flight tracker for your wall. Shows live info for planes
-overhead on a single 128×64 HUB75 panel driven by an Adafruit MatrixPortal S3.
+A LED flight tracker for your wall. Shows live info for planes overhead on a
+single 128×64 HUB75 panel driven by an Adafruit MatrixPortal S3.
+
+## What it shows
+
+Each flight card is split into a fixed top section and a rotating bottom
+section:
+
+- **Left:** a 40×30 color airline logo (502 airlines bundled in firmware,
+  looked up by IATA code)
+- **Top right:** airline name, IATA route (e.g. `LHR-JFK`), and aircraft type
+- **Bottom:** two message lines that rotate every few seconds, plus a fixed
+  callsign/altitude line at the very bottom
+
+The rotating messages are built from whatever data is available for that
+flight — route cities, arrival/departure context, altitude, climb/descent,
+speed, distance and bearing, registration, callsign, squawk, and more.
+Emergency squawks (7500/7600/7700) pin an `EMERGENCY` message pair and
+override rotation.
+
+When several aircraft are in range, the display cycles between them on the
+same interval. With `COMMERCIAL_FLIGHTS_ONLY` enabled (the default), only
+large and heavy jets are tracked so the panel focuses on airline traffic.
 
 ## Components
 
@@ -26,15 +47,17 @@ orientation.
 
 The firmware uses free, no-account endpoints:
 
-1. airplanes.live for position, callsign and altitude data
-2. adsbdb for route, airline and human-readable aircraft metadata
+1. **airplanes.live** — position, callsign, altitude, ground speed, vertical
+   rate, track, squawk, emergency state, emitter category, registration, and
+   aircraft type description
+2. **adsbdb** — route, airline metadata, airport details, aircraft
+   manufacturer, registered owner, and human-readable aircraft names
 
-No API keys, accounts or payment cards are required.
-Nimbus bundles an optimized color logo library for 500+ airlines, so logos
-do not require another API or CDN at runtime.
+No API keys, accounts or payment cards are required. Color airline logos are
+bundled into the firmware and require no runtime CDN or logo service.
 
-Each flight card shows the airline logo and name, IATA route, aircraft type,
-London-aware arrival/departure context, airport name, callsign and altitude.
+WiFi reconnects automatically before each fetch. If the network is down, the
+device skips the fetch and keeps showing the last known flights.
 
 ## Configuration
 
@@ -44,11 +67,31 @@ connect to a 5 GHz-only hotspot.
 
 Update [UserConfiguration.h](firmware/config/UserConfiguration.h):
 
-- `CENTER_LAT`: latitude of the tracking center
-- `CENTER_LON`: longitude of the tracking center
-- `RADIUS_KM`: search radius in kilometers
-- `MAX_TRACKED_FLIGHTS`: maximum nearest aircraft to enrich and display
-- `DISPLAY_BRIGHTNESS`: use 20–40 for a low-brightness bench test
+| Setting | Purpose |
+| --- | --- |
+| `CENTER_LAT` / `CENTER_LON` | Tracking center (defaults to central London) |
+| `RADIUS_KM` | Search radius in kilometers |
+| `MAX_TRACKED_FLIGHTS` | Nearest aircraft to enrich and display |
+| `COMMERCIAL_FLIGHTS_ONLY` | Skip light aircraft, helicopters, drones, etc. |
+| `DISPLAY_BRIGHTNESS` | Panel brightness 0–255; use 20–40 for USB bench tests |
+| `TEXT_COLOR_R/G/B` | Text color on the LED matrix |
+
+Polling and display-cycle intervals are in
+[TimingConfiguration.h](firmware/config/TimingConfiguration.h) (default: fetch
+every 30 s, rotate messages every 3 s).
+
+## Project layout
+
+```
+firmware/
+  src/main.cpp              # setup/loop, WiFi, fetch and display orchestration
+  adapters/                 # airplanes.live, adsbdb, and HUB75 display drivers
+  core/                     # FlightDataFetcher, FlightText, FlightMessages
+  models/                   # FlightInfo, StateVector, AirportInfo
+  assets/                   # bundled airline logo library (RGB565)
+  config/                   # WiFi, location, timing, and hardware settings
+  tools/                    # logo generation script
+```
 
 ## Build and upload
 
@@ -58,7 +101,10 @@ Update [UserConfiguration.h](firmware/config/UserConfiguration.h):
 4. Build or upload the `adafruit_matrixportal_esp32s3` environment.
 5. Open the serial monitor at 115200 baud for diagnostics.
 
-See [firmware/README.md](firmware/README.md) for firmware details.
+The firmware image uses a custom 4 MB app partition to fit the bundled logo
+library while keeping TinyUF2 drag-and-drop flashing. See
+[firmware/README.md](firmware/README.md) for firmware details, partition
+layout, and logo regeneration.
 
 ## Credits
 
