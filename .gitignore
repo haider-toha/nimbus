@@ -1,7 +1,12 @@
 misc
 .DS_Store
 .venv
+.clangd
+.vscode/
+compile_commands.json
 firmware/.pio
+firmware/.cache/
+firmware/compile_commands.json
 firmware/config/WiFiSecrets.h
 plan/
 .claude/
