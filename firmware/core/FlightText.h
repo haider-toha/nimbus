@@ -23,10 +23,13 @@ namespace FlightText
     // byte level so the classic bitmap font can render it legibly. Any other
     // non-ASCII byte sequence is dropped rather than left as a raw high byte.
     String asciiFold(const String &text);
-    // Applies the airline abbreviation dictionary to an ALREADY ascii-folded
-    // name: drops generic phrases/words (Airlines, Airways, Company, ...),
-    // abbreviates long qualifiers (International -> Intl, ...), and falls
-    // back to the original first word if every word was dropped.
+    // Abbreviates an ALREADY ascii-folded airline name to fit the 14-column top
+    // line: a small grounded brand-override allowlist wins first; else drop
+    // generic phrases/words (Company, Aviation, ...) and abbreviate qualifiers
+    // (International -> Intl), keep "Airlines"/"Airways" only when the whole
+    // name still fits (so "British Airways" stays "British Air", never bare
+    // "British"), shrink a country/region qualifier on overflow, and finally
+    // drop whole trailing words -- never a mid-word cut. Result fits 14 cols.
     String abbreviateAirline(const String &name);
     // Single source of truth for the top airline line: selects the name
     // (airline_display_name_full, else operator_iata, else operator_icao),

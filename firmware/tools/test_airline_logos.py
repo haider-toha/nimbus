@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 import struct
 import unittest
-from pathlib import Path
 from unittest import mock
 
 from PIL import Image
@@ -94,6 +93,73 @@ class AirlineLogoLibraryTests(unittest.TestCase):
                 logos.MIN_RUNTIME_VISIBLE_PIXELS,
                 iata,
             )
+
+    def test_croatia_logo_fills_the_cell(self) -> None:
+        """OU (Croatia) must render a substantial emblem, not a ~3px sliver.
+
+        Regression guard for the leading-emblem crop (LEADING_EMBLEM_CROP_IATAS):
+        the full "CROATIA AIRLINES" wordmark content-fits to ~82 visible px in a
+        40x3 sliver; cropping to the checkerboard emblem fills the cell (~493 px).
+        """
+        offsets = dict(self.logo_entries)
+        self.assertIn("OU", offsets)
+        pixels = struct.unpack_from(
+            f"<{logos.PIXELS_PER_LOGO}H",
+            self.binary,
+            offsets["OU"],
+        )
+        visible = sum(logos._runtime_pixel(pixel) != 0 for pixel in pixels)
+        self.assertGreater(
+            visible,
+            300,
+            f"OU logo renders only {visible} visible px -- sliver regression",
+        )
+
+    def test_emblem_crop_logos_fill_the_cell(self) -> None:
+        """The leading-emblem-crop set renders a substantial, cell-filling emblem.
+
+        Regression guard for the broken-logo fixes: each of these was a
+        near-empty sliver/stub whose art has a distinct brand symbol; cropping
+        to the leading square fills the cell (all render >200 px).
+        """
+        offsets = dict(self.logo_entries)
+        emblem_iatas = ("CI", "FG", "GV", "8U", "HX", "IE", "K6", "KR", "OQ",
+                        "6Y", "LN", "CL", "N4", "PB", "AE", "DJ", "CV")
+        for iata in emblem_iatas:
+            with self.subTest(iata=iata):
+                self.assertIn(iata, offsets)
+                pixels = struct.unpack_from(
+                    f"<{logos.PIXELS_PER_LOGO}H",
+                    self.binary,
+                    offsets[iata],
+                )
+                visible = sum(logos._runtime_pixel(pixel) != 0 for pixel in pixels)
+                self.assertGreater(visible, 200, f"{iata} emblem only {visible} px")
+
+    def test_manual_text_tiles_render_legibly(self) -> None:
+        """The reassigned-IATA carriers render their brand-colour name tile.
+
+        Regression guard for MANUAL_LOGO_LABELS: each was shipping a different
+        (defunct) airline's art; the replacement text tile must render a
+        substantial, legible mark (>150 px).
+        """
+        offsets = dict(self.logo_entries)
+        for iata in logos.MANUAL_LOGO_LABELS:
+            with self.subTest(iata=iata):
+                self.assertIn(iata, offsets)
+                pixels = struct.unpack_from(
+                    f"<{logos.PIXELS_PER_LOGO}H",
+                    self.binary,
+                    offsets[iata],
+                )
+                visible = sum(logos._runtime_pixel(pixel) != 0 for pixel in pixels)
+                self.assertGreater(visible, 150, f"{iata} tile only {visible} px")
+
+    def test_leading_emblem_crop_isolates_the_leading_square(self) -> None:
+        """`_crop_leading_square` returns the leading side*side block."""
+        image = Image.new("RGBA", (120, 30), (0, 0, 0, 0))
+        cropped = logos._crop_leading_square(image)
+        self.assertEqual(cropped.size, (30, 30))
 
     def test_source_selection_never_silently_falls_back(self) -> None:
         curated_slugs = {"QR": "qatar-airways", "NZ": "air-new-zealand"}

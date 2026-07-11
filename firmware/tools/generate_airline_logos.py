@@ -15,7 +15,7 @@ import urllib.request
 from pathlib import Path
 
 import cairosvg
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 
 SOURCE_REPOSITORY = "amannuhman/airlines-and-logos"
@@ -66,6 +66,72 @@ PRIMARY_SOURCE_IATAS = frozenset(
     }
 )
 
+# Wide "emblem + wordmark" lockups whose full art content-fits to an unreadable
+# horizontal sliver. For these, crop to the leading square block (side = content
+# height) -- the brand emblem (roundel / bird / temple / crest / checkerboard) --
+# so it fills the 40x30 cell instead of a 3px line. Each entry was verified
+# against its rendered emblem, not guessed -- see
+# audit/display-iteration/07-phase3b-logo-fixes.md. OU is the checkerboard
+# (82 px/40x3 -> 493 px/33x30); the rest are CI plum-blossom, FG Ariana bird,
+# GV compass-star, 8U Afriqiyah chevrons, HX orchid, IE Solomon crest, K6/KR
+# temples, OQ swirl, PB chevron, 6Y star, LN ring, CL Lufthansa crane, N4 swoosh.
+LEADING_EMBLEM_CROP_IATAS = frozenset({
+    "OU", "CI", "FG", "GV", "8U", "HX", "IE", "K6", "KR", "OQ", "PB", "6Y", "LN", "CL", "N4",
+    # micro-glyph marks whose leading-square crop is the real brand symbol:
+    "AE",  # Mandarin Airlines stylized mark (98 -> 529 px)
+    "DJ",  # Star Air flying-bird mark (98 -> 419 px)
+    "CV",  # Air Chathams three-shape mark (129 -> 514 px)
+})
+
+# Faint/dark source art that content-fits to too few visible pixels to read at
+# the device's brightness-32 decode. Unlike the near-blank auto-rescue (which
+# triggers only below MIN_RUNTIME_VISIBLE_PIXELS), these render 40-230 px but are
+# still unreadable; force the hue-preserving brightness floor. Each was verified
+# to become legible once lifted (see audit/display-iteration/07-phase3b-logo-fixes.md).
+# CL/LN are in both sets: emblem-crop then brighten the dark emblem.
+BRIGHTNESS_BOOST_IATAS = frozenset({
+    "AA", "5A", "8P", "F8", "EZ", "NK", "NZ", "UU", "J3", "ZG", "ZH", "UR",
+    "HD", "SF", "YX", "B9", "CJ", "K4", "5R", "D2", "CL", "LN",
+})
+
+# Reassigned-IATA carriers whose upstream art is a DIFFERENT (usually defunct)
+# airline, and for which no free source carries the correct current art (checked:
+# the alternate IATA datasets ship the same stale art or a placeholder). Rather
+# than show the wrong brand, render the carrier's name set in its approximate
+# brand colour -- a legible, non-infringing identification tile (plain text, NOT
+# a reproduction of the airline's logo artwork), matching what the card labels
+# the flight. Value is (text, RGB); "\n" splits lines. Each verified to render
+# legibly at 40x30. See audit/display-iteration/07-phase3c-wrong-brand-logos.md.
+MANUAL_LOGO_LABELS = {
+    "OV": ("salam", (0, 166, 166)),       # SalamAir (was Estonian Air)
+    "JA": ("Jet\nSMART", (228, 0, 43)),   # JetSMART (was BH Airlines)
+    "9P": ("Fly\nJinnah", (200, 16, 46)), # Fly Jinnah (was Air Arabia art)
+    "ZT": ("TITAN", (40, 60, 120)),       # Titan Airways (was Eastar Jet)
+    "AN": ("ADV\nAIR", (43, 108, 176)),   # Advanced Air (was HOP! art)
+    "CO": ("Cont'l", (16, 54, 125)),      # Continental (upstream name; was Cobalt art)
+    "G7": ("GoJet", (31, 78, 156)),       # GoJet Airlines (was KAPO art)
+    "EG": ("Aer\nLingus", (0, 132, 61)),  # Aer Lingus UK (was Ellinair art)
+    "AL": ("TAE", (150, 158, 166)),       # TAE Avia (was Malta Air art)
+    "BF": ("Aero", (150, 158, 166)),      # Aero-Service (was frenchbee art)
+    "FN": ("RAL", (150, 158, 166)),       # Regional Air Lines (was fastjet art)
+    # micro-glyph carriers whose source mark won't isolate to a clean emblem:
+    "JY": ("inter\nCarib", (0, 150, 160)),  # InterCaribbean Airways
+    "TJ": ("Trade\nwind", (30, 60, 110)),   # Tradewind Aviation
+    # faint wordmarks brightness can't rescue and with no emblem to crop:
+    "4B": ("Boutiq\nAir", (40, 80, 150)),   # Boutique Air
+    "7G": ("STAR\nFLYER", (220, 220, 225)), # Star Flyer (real logo is black -> unusable on a black panel)
+}
+
+# Bold-font search path for the manual text tiles, first hit wins; falls back to
+# Pillow's built-in bitmap font so generation never hard-depends on a system font.
+FONT_CANDIDATES = (
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/Library/Fonts/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIRECTORY = PROJECT_ROOT / "assets"
 BINARY_PATH = ASSET_DIRECTORY / "airline_logos.bin"
@@ -98,6 +164,20 @@ def _crop_to_content(image: Image.Image) -> Image.Image:
     if bbox is None:
         return image
     return image.crop(bbox)
+
+
+def _crop_leading_square(image: Image.Image) -> Image.Image:
+    """Crop a wide emblem+wordmark lockup to its leading square (the emblem).
+
+    Used only for LEADING_EMBLEM_CROP_IATAS: the source art is a compact brand
+    emblem followed by a long wordmark, so fitting the whole thing yields an
+    unreadable sliver. The emblem is the leading square block (side = content
+    height); isolating it lets the emblem fill the cell. Assumes the image has
+    already been cropped to content.
+    """
+    width, height = image.size
+    side = min(width, height)
+    return image.crop((0, 0, side, height))
 
 
 def _apply_brightness_floor(image: Image.Image, floor: int) -> Image.Image:
@@ -170,18 +250,81 @@ def _runtime_visible_pixels(image: Image.Image) -> int:
     return sum(_runtime_pixel(pixel[0]) != 0 for pixel in pixels)
 
 
-def render_logo(svg: bytes) -> tuple[Image.Image, bool]:
-    """Render one SVG and selectively rescue content invisible at runtime."""
+def _load_bold_font(size: int) -> ImageFont.ImageFont:
+    """First available bold font at `size`, else Pillow's built-in bitmap font."""
+    for path in FONT_CANDIDATES:
+        if Path(path).exists():
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                continue
+    return ImageFont.load_default()
+
+
+def render_text_logo(text: str, color: tuple[int, int, int]) -> tuple[Image.Image, bool]:
+    """Render a plain-text brand wordmark identification tile to a logo cell.
+
+    For MANUAL_LOGO_LABELS carriers only: draws the airline's name in its
+    approximate brand colour, centred and scaled to fill the 40x30 cell. This is
+    a legible identifier, not a reproduction of the airline's logo artwork.
+    Newlines split the text into stacked, centred lines.
+    """
+    lines = text.split("\n")
+    font = _load_bold_font(120)
+    canvas = Image.new("RGBA", (1200, 600), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    heights: list[int] = []
+    for line in lines:
+        box = draw.textbbox((0, 0), line, font=font)
+        heights.append(box[3] - box[1])
+    line_gap = 20
+    total_height = sum(heights) + line_gap * (len(lines) - 1)
+
+    top = (canvas.height - total_height) // 2
+    for line, height in zip(lines, heights):
+        box = draw.textbbox((0, 0), line, font=font)
+        width = box[2] - box[0]
+        draw.text(
+            ((canvas.width - width) // 2 - box[0], top - box[1]),
+            line,
+            font=font,
+            fill=color + (255,),
+        )
+        top += height + line_gap
+
+    logo = _fit_to_logo_cell(_crop_to_content(canvas))
+    composited = _composite_logo(logo)
+    if _runtime_visible_pixels(composited) >= MIN_RUNTIME_VISIBLE_PIXELS:
+        return composited, False
+    lifted = _apply_brightness_floor(logo.copy(), VISIBILITY_BRIGHTNESS_FLOOR)
+    return _composite_logo(lifted), True
+
+
+def render_logo(
+    svg: bytes,
+    leading_emblem_crop: bool = False,
+    brightness_boost: bool = False,
+) -> tuple[Image.Image, bool]:
+    """Render one SVG and selectively rescue content invisible at runtime.
+
+    `brightness_boost` forces the brightness floor even when the logo is above
+    the near-blank threshold -- for faint/dark art that is technically visible
+    but unreadable on the panel.
+    """
     png = cairosvg.svg2png(
         bytestring=svg,
         scale=RASTER_SCALE,
         unsafe=True,
     )
     logo = Image.open(io.BytesIO(png)).convert("RGBA")
-    logo = _fit_to_logo_cell(_crop_to_content(logo))
+    logo = _crop_to_content(logo)
+    if leading_emblem_crop:
+        logo = _crop_to_content(_crop_leading_square(logo))
+    logo = _fit_to_logo_cell(logo)
 
     canvas = _composite_logo(logo)
-    if _runtime_visible_pixels(canvas) >= MIN_RUNTIME_VISIBLE_PIXELS:
+    if not brightness_boost and _runtime_visible_pixels(canvas) >= MIN_RUNTIME_VISIBLE_PIXELS:
         return canvas, False
 
     lifted_logo = _apply_brightness_floor(
@@ -469,8 +612,17 @@ def main() -> None:
         try:
             airline = airlines_by_iata[iata]
             icao = str(airline["icao"]).upper()
-            svg, source = _download_logo(iata, curated_slugs)
-            canvas, brightness_lifted = render_logo(svg)
+            if iata in MANUAL_LOGO_LABELS:
+                text, color = MANUAL_LOGO_LABELS[iata]
+                canvas, brightness_lifted = render_text_logo(text, color)
+                source = "manual"
+            else:
+                svg, source = _download_logo(iata, curated_slugs)
+                canvas, brightness_lifted = render_logo(
+                    svg,
+                    leading_emblem_crop=iata in LEADING_EMBLEM_CROP_IATAS,
+                    brightness_boost=iata in BRIGHTNESS_BOOST_IATAS,
+                )
             _validate_logo(iata, canvas)
 
             encoded = rgb565_bytes(canvas)
