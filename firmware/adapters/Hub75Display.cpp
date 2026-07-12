@@ -19,6 +19,17 @@ constexpr int TOP_TEXT_X = 42;
 // Topmost bottom-block text line (see displaySingleFlightCard's rotating
 // message pair). WS4's logo cell is sized against this staying put.
 constexpr int BOTTOM_TEXT_Y = 31;
+constexpr uint8_t BAYER_SIZE = 8;
+constexpr uint8_t BAYER_AREA = BAYER_SIZE * BAYER_SIZE;
+constexpr uint8_t BAYER_8X8[BAYER_AREA] = {
+    0, 32, 8, 40, 2, 34, 10, 42,
+    48, 16, 56, 24, 50, 18, 58, 26,
+    12, 44, 4, 36, 14, 46, 6, 38,
+    60, 28, 52, 20, 62, 30, 54, 22,
+    3, 35, 11, 43, 1, 33, 9, 41,
+    51, 19, 59, 27, 49, 17, 57, 25,
+    15, 47, 7, 39, 13, 45, 5, 37,
+    63, 31, 55, 23, 61, 29, 53, 21};
 
 // WS4 (bigger per-airline logos): the logo cell must not run into either
 // text zone. Enforced at compile time -- rather than only by a runtime QA
@@ -31,10 +42,46 @@ static_assert(
     LOGO_Y + AirlineLogoLibrary::LOGO_HEIGHT <= BOTTOM_TEXT_Y,
     "airline logo cell must not overlap the bottom message block");
 
-uint8_t scaleChannel(uint8_t channel, uint16_t brightness)
+uint8_t expandLevel(uint32_t level, uint16_t levels)
 {
-    return static_cast<uint8_t>(
-        (static_cast<uint16_t>(channel) * brightness + 127) / 255);
+    return static_cast<uint8_t>((level * 255U + levels / 2U) / levels);
+}
+
+uint8_t scaleTextChannel(uint8_t channel, uint16_t brightness)
+{
+    const uint16_t levels =
+        (1U << HardwareConfiguration::BIT_DEPTH) - 1U;
+    const uint32_t denominator = 255U * 255U;
+    const uint32_t scaled =
+        static_cast<uint32_t>(channel) * brightness * levels;
+    const uint32_t scaledLevel =
+        (scaled + denominator / 2U) / denominator;
+    return expandLevel(scaledLevel, levels);
+}
+
+uint8_t ditherLogoChannel(
+    uint8_t channel,
+    uint16_t brightness,
+    uint8_t x,
+    uint8_t y)
+{
+    const uint16_t levels =
+        (1U << HardwareConfiguration::BIT_DEPTH) - 1U;
+    const uint32_t denominator = 255U * 255U;
+    const uint32_t scaled =
+        static_cast<uint32_t>(channel) * brightness * levels;
+    uint32_t level = scaled / denominator;
+    const uint32_t remainder = scaled % denominator;
+    const uint8_t threshold =
+        BAYER_8X8[(y % BAYER_SIZE) * BAYER_SIZE + (x % BAYER_SIZE)];
+
+    if (level < levels &&
+        remainder * (BAYER_AREA * 2U) >
+            static_cast<uint32_t>(threshold * 2U + 1U) * denominator)
+    {
+        ++level;
+    }
+    return expandLevel(level, levels);
 }
 }
 
@@ -73,18 +120,18 @@ bool Hub75Display::initialize()
 void Hub75Display::clear()
 {
     _matrix.fillScreen(0);
-    _matrix.show();
+    showFrame();
 }
 
 uint16_t Hub75Display::textColor()
 {
     const uint16_t brightness = UserConfiguration::DISPLAY_BRIGHTNESS;
     const uint8_t red =
-        scaleChannel(UserConfiguration::TEXT_COLOR_R, brightness);
+        scaleTextChannel(UserConfiguration::TEXT_COLOR_R, brightness);
     const uint8_t green =
-        scaleChannel(UserConfiguration::TEXT_COLOR_G, brightness);
+        scaleTextChannel(UserConfiguration::TEXT_COLOR_G, brightness);
     const uint8_t blue =
-        scaleChannel(UserConfiguration::TEXT_COLOR_B, brightness);
+        scaleTextChannel(UserConfiguration::TEXT_COLOR_B, brightness);
     return _matrix.color565(red, green, blue);
 }
 
@@ -118,14 +165,22 @@ void Hub75Display::drawAirlineLogo(
                 continue;
             }
 
-            const uint16_t red =
-                scaleChannel((pixel >> 11) & 0x1F, brightness);
-            const uint16_t green =
-                scaleChannel((pixel >> 5) & 0x3F, brightness);
-            const uint16_t blue =
-                scaleChannel(pixel & 0x1F, brightness);
-            const uint16_t scaledPixel =
-                (red << 11) | (green << 5) | blue;
+            const uint8_t red = ditherLogoChannel(
+                static_cast<uint8_t>(((pixel >> 11) & 0x1F) * 255U / 31U),
+                brightness,
+                column,
+                row);
+            const uint8_t green = ditherLogoChannel(
+                static_cast<uint8_t>(((pixel >> 5) & 0x3F) * 255U / 63U),
+                brightness,
+                column,
+                row);
+            const uint8_t blue = ditherLogoChannel(
+                static_cast<uint8_t>((pixel & 0x1F) * 255U / 31U),
+                brightness,
+                column,
+                row);
+            const uint16_t scaledPixel = _matrix.color565(red, green, blue);
             _matrix.drawPixel(
                 x + column,
                 y + row,
@@ -256,7 +311,7 @@ void Hub75Display::displayFlights(const std::vector<FlightInfo> &flights)
     }
 
     displaySingleFlightCard(flights[_currentFlightIndex % flights.size()]);
-    _matrix.show();
+    showFrame();
 }
 
 void Hub75Display::displayLoadingScreen()
@@ -272,7 +327,7 @@ void Hub75Display::displayLoadingScreen()
     const int16_t y =
         (HardwareConfiguration::PANEL_HEIGHT - CHARACTER_HEIGHT) / 2;
     drawTextLine(x, y, message, color);
-    _matrix.show();
+    showFrame();
 }
 
 void Hub75Display::displayMessage(const String &message)
@@ -284,10 +339,16 @@ void Hub75Display::displayMessage(const String &message)
     const int16_t y =
         (HardwareConfiguration::PANEL_HEIGHT - CHARACTER_HEIGHT) / 2;
     drawTextLine(0, y, line, textColor());
-    _matrix.show();
+    showFrame();
 }
 
 void Hub75Display::showLoading()
 {
     displayLoadingScreen();
+}
+
+void Hub75Display::showFrame()
+{
+    _matrix.show();
+    vTaskDelay(1);
 }

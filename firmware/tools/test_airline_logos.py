@@ -80,6 +80,31 @@ class AirlineLogoLibraryTests(unittest.TestCase):
             )
         )
 
+    def test_runtime_dithering_preserves_reported_brand_colors(self) -> None:
+        offsets = dict(self.logo_entries)
+        ryanair = self._runtime_colors(offsets["FR"])
+        british_airways = self._runtime_colors(offsets["BA"])
+        air_china = self._runtime_colors(offsets["CA"])
+        china_airlines = self._runtime_colors(offsets["CI"])
+        virgin = self._runtime_colors(offsets["VS"])
+
+        self.assertTrue(
+            any(red > 0 and green > 0 and blue == 0 for red, green, blue in ryanair)
+        )
+        self.assertTrue(
+            any(
+                red > blue * 2 and red > green * 2
+                for red, green, blue in british_airways
+            )
+        )
+        self.assertTrue(
+            any(blue > red * 2 and blue > green for red, green, blue in british_airways)
+        )
+        for colors in (air_china, china_airlines, virgin):
+            self.assertTrue(
+                any(red > green * 2 and red > blue for red, green, blue in colors)
+            )
+
     def test_every_logo_survives_runtime_brightness(self) -> None:
         for iata, offset in self.logo_entries:
             pixels = struct.unpack_from(
@@ -87,7 +112,7 @@ class AirlineLogoLibraryTests(unittest.TestCase):
                 self.binary,
                 offset,
             )
-            visible = sum(logos._runtime_pixel(pixel) != 0 for pixel in pixels)
+            visible = self._runtime_visible_count(pixels)
             self.assertGreaterEqual(
                 visible,
                 logos.MIN_RUNTIME_VISIBLE_PIXELS,
@@ -108,7 +133,7 @@ class AirlineLogoLibraryTests(unittest.TestCase):
             self.binary,
             offsets["OU"],
         )
-        visible = sum(logos._runtime_pixel(pixel) != 0 for pixel in pixels)
+        visible = self._runtime_visible_count(pixels)
         self.assertGreater(
             visible,
             300,
@@ -120,11 +145,28 @@ class AirlineLogoLibraryTests(unittest.TestCase):
 
         Regression guard for the broken-logo fixes: each of these was a
         near-empty sliver/stub whose art has a distinct brand symbol; cropping
-        to the leading square fills the cell (all render >200 px).
+        to the leading square fills the cell (all render >190 dithered px).
         """
         offsets = dict(self.logo_entries)
-        emblem_iatas = ("CI", "FG", "GV", "8U", "HX", "IE", "K6", "KR", "OQ",
-                        "6Y", "LN", "CL", "N4", "PB", "AE", "DJ", "CV")
+        emblem_iatas = (
+            "CI",
+            "FG",
+            "GV",
+            "8U",
+            "HX",
+            "IE",
+            "K6",
+            "KR",
+            "OQ",
+            "6Y",
+            "LN",
+            "CL",
+            "N4",
+            "PB",
+            "AE",
+            "DJ",
+            "CV",
+        )
         for iata in emblem_iatas:
             with self.subTest(iata=iata):
                 self.assertIn(iata, offsets)
@@ -133,8 +175,8 @@ class AirlineLogoLibraryTests(unittest.TestCase):
                     self.binary,
                     offsets[iata],
                 )
-                visible = sum(logos._runtime_pixel(pixel) != 0 for pixel in pixels)
-                self.assertGreater(visible, 200, f"{iata} emblem only {visible} px")
+                visible = self._runtime_visible_count(pixels)
+                self.assertGreater(visible, 190, f"{iata} emblem only {visible} px")
 
     def test_manual_text_tiles_render_legibly(self) -> None:
         """The reassigned-IATA carriers render their brand-colour name tile.
@@ -152,7 +194,7 @@ class AirlineLogoLibraryTests(unittest.TestCase):
                     self.binary,
                     offsets[iata],
                 )
-                visible = sum(logos._runtime_pixel(pixel) != 0 for pixel in pixels)
+                visible = self._runtime_visible_count(pixels)
                 self.assertGreater(visible, 150, f"{iata} tile only {visible} px")
 
     def test_leading_emblem_crop_isolates_the_leading_square(self) -> None:
@@ -195,6 +237,42 @@ class AirlineLogoLibraryTests(unittest.TestCase):
             for pixel in pixels
             if pixel != 0
         ]
+
+    def _runtime_colors(self, offset: int) -> list[tuple[int, int, int]]:
+        pixels = struct.unpack_from(
+            f"<{logos.PIXELS_PER_LOGO}H",
+            self.binary,
+            offset,
+        )
+        runtime_pixels = (
+            logos._runtime_pixel(
+                pixel,
+                index % logos.LOGO_WIDTH,
+                index // logos.LOGO_WIDTH,
+            )
+            for index, pixel in enumerate(pixels)
+        )
+        return [
+            (
+                ((pixel >> 11) & 0x1F) * 255 // 31,
+                ((pixel >> 5) & 0x3F) * 255 // 63,
+                (pixel & 0x1F) * 255 // 31,
+            )
+            for pixel in runtime_pixels
+            if pixel != 0
+        ]
+
+    @staticmethod
+    def _runtime_visible_count(pixels: tuple[int, ...]) -> int:
+        return sum(
+            logos._runtime_pixel(
+                pixel,
+                index % logos.LOGO_WIDTH,
+                index // logos.LOGO_WIDTH,
+            )
+            != 0
+            for index, pixel in enumerate(pixels)
+        )
 
 
 if __name__ == "__main__":

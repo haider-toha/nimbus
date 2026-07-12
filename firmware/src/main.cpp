@@ -32,6 +32,7 @@ static bool ensureWiFi()
     Serial.printf("WiFi connecting to \"%s\"...\n", WiFiConfiguration::WIFI_SSID);
     WiFi.disconnect();
     WiFi.begin(WiFiConfiguration::WIFI_SSID, WiFiConfiguration::WIFI_PASSWORD);
+    WiFi.setSleep(false);
 
     int attempts = 0;
     while (WiFi.status() != WL_CONNECTED && attempts < 50)

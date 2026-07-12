@@ -16,7 +16,7 @@ namespace UserConfiguration
 
     // Display customization
     // Brightness controls overall display brightness (0-255)
-    static const uint8_t DISPLAY_BRIGHTNESS = 32;
+    static const uint8_t DISPLAY_BRIGHTNESS = 96;
 
     // RGB color for all text rendering on the LED matrix
     static const uint8_t TEXT_COLOR_R = 255;

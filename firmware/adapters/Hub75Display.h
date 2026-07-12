@@ -33,4 +33,5 @@ private:
     void drawTextLine(int16_t x, int16_t y, const String &text, uint16_t color);
     void displaySingleFlightCard(const FlightInfo &flight);
     void displayLoadingScreen();
+    void showFrame();
 };

@@ -21,8 +21,7 @@ from PIL import Image, ImageDraw, ImageFont
 SOURCE_REPOSITORY = "amannuhman/airlines-and-logos"
 SOURCE_REVISION = "f90a5a8e1481dd0e0379936e4a5b477f4cf9f60e"
 SOURCE_ROOT = (
-    f"https://raw.githubusercontent.com/{SOURCE_REPOSITORY}/"
-    f"{SOURCE_REVISION}/data"
+    f"https://raw.githubusercontent.com/{SOURCE_REPOSITORY}/{SOURCE_REVISION}/data"
 )
 CURATED_SOURCE_ROOT = (
     "https://raw.githubusercontent.com/anhthang/soaring-symbols/"
@@ -35,9 +34,76 @@ PIXELS_PER_LOGO = LOGO_WIDTH * LOGO_HEIGHT
 BYTES_PER_LOGO = PIXELS_PER_LOGO * 2
 EXPECTED_LOGO_COUNT = 502
 RASTER_SCALE = 4.0
-DISPLAY_BRIGHTNESS = 32
+DISPLAY_BRIGHTNESS = 96
+DISPLAY_BIT_DEPTH = 3
 MIN_RUNTIME_VISIBLE_PIXELS = 12
 VISIBILITY_BRIGHTNESS_FLOOR = 160
+BAYER_8X8 = (
+    0,
+    32,
+    8,
+    40,
+    2,
+    34,
+    10,
+    42,
+    48,
+    16,
+    56,
+    24,
+    50,
+    18,
+    58,
+    26,
+    12,
+    44,
+    4,
+    36,
+    14,
+    46,
+    6,
+    38,
+    60,
+    28,
+    52,
+    20,
+    62,
+    30,
+    54,
+    22,
+    3,
+    35,
+    11,
+    43,
+    1,
+    33,
+    9,
+    41,
+    51,
+    19,
+    59,
+    27,
+    49,
+    17,
+    57,
+    25,
+    15,
+    47,
+    7,
+    39,
+    13,
+    45,
+    5,
+    37,
+    63,
+    31,
+    55,
+    23,
+    61,
+    29,
+    53,
+    21,
+)
 
 # These entries exist in the curated manifest but do not have a curated SVG
 # at the pinned revision. NZ is also explicit here because its curated icon
@@ -75,24 +141,62 @@ PRIMARY_SOURCE_IATAS = frozenset(
 # (82 px/40x3 -> 493 px/33x30); the rest are CI plum-blossom, FG Ariana bird,
 # GV compass-star, 8U Afriqiyah chevrons, HX orchid, IE Solomon crest, K6/KR
 # temples, OQ swirl, PB chevron, 6Y star, LN ring, CL Lufthansa crane, N4 swoosh.
-LEADING_EMBLEM_CROP_IATAS = frozenset({
-    "OU", "CI", "FG", "GV", "8U", "HX", "IE", "K6", "KR", "OQ", "PB", "6Y", "LN", "CL", "N4",
-    # micro-glyph marks whose leading-square crop is the real brand symbol:
-    "AE",  # Mandarin Airlines stylized mark (98 -> 529 px)
-    "DJ",  # Star Air flying-bird mark (98 -> 419 px)
-    "CV",  # Air Chathams three-shape mark (129 -> 514 px)
-})
+LEADING_EMBLEM_CROP_IATAS = frozenset(
+    {
+        "OU",
+        "CI",
+        "FG",
+        "GV",
+        "8U",
+        "HX",
+        "IE",
+        "K6",
+        "KR",
+        "OQ",
+        "PB",
+        "6Y",
+        "LN",
+        "CL",
+        "N4",
+        # micro-glyph marks whose leading-square crop is the real brand symbol:
+        "AE",  # Mandarin Airlines stylized mark (98 -> 529 px)
+        "DJ",  # Star Air flying-bird mark (98 -> 419 px)
+        "CV",  # Air Chathams three-shape mark (129 -> 514 px)
+    }
+)
 
-# Faint/dark source art that content-fits to too few visible pixels to read at
-# the device's brightness-32 decode. Unlike the near-blank auto-rescue (which
+# Faint/dark source art that content-fits to too few visible pixels at the
+# configured device brightness. Unlike the near-blank auto-rescue (which
 # triggers only below MIN_RUNTIME_VISIBLE_PIXELS), these render 40-230 px but are
 # still unreadable; force the hue-preserving brightness floor. Each was verified
 # to become legible once lifted (see audit/display-iteration/07-phase3b-logo-fixes.md).
 # CL/LN are in both sets: emblem-crop then brighten the dark emblem.
-BRIGHTNESS_BOOST_IATAS = frozenset({
-    "AA", "5A", "8P", "F8", "EZ", "NK", "NZ", "UU", "J3", "ZG", "ZH", "UR",
-    "HD", "SF", "YX", "B9", "CJ", "K4", "5R", "D2", "CL", "LN",
-})
+BRIGHTNESS_BOOST_IATAS = frozenset(
+    {
+        "AA",
+        "5A",
+        "8P",
+        "F8",
+        "EZ",
+        "NK",
+        "NZ",
+        "UU",
+        "J3",
+        "ZG",
+        "ZH",
+        "UR",
+        "HD",
+        "SF",
+        "YX",
+        "B9",
+        "CJ",
+        "K4",
+        "5R",
+        "D2",
+        "CL",
+        "LN",
+    }
+)
 
 # Reassigned-IATA carriers whose upstream art is a DIFFERENT (usually defunct)
 # airline, and for which no free source carries the correct current art (checked:
@@ -103,23 +207,26 @@ BRIGHTNESS_BOOST_IATAS = frozenset({
 # the flight. Value is (text, RGB); "\n" splits lines. Each verified to render
 # legibly at 40x30. See audit/display-iteration/07-phase3c-wrong-brand-logos.md.
 MANUAL_LOGO_LABELS = {
-    "OV": ("salam", (0, 166, 166)),       # SalamAir (was Estonian Air)
-    "JA": ("Jet\nSMART", (228, 0, 43)),   # JetSMART (was BH Airlines)
-    "9P": ("Fly\nJinnah", (200, 16, 46)), # Fly Jinnah (was Air Arabia art)
-    "ZT": ("TITAN", (40, 60, 120)),       # Titan Airways (was Eastar Jet)
-    "AN": ("ADV\nAIR", (43, 108, 176)),   # Advanced Air (was HOP! art)
-    "CO": ("Cont'l", (16, 54, 125)),      # Continental (upstream name; was Cobalt art)
-    "G7": ("GoJet", (31, 78, 156)),       # GoJet Airlines (was KAPO art)
+    "OV": ("salam", (0, 166, 166)),  # SalamAir (was Estonian Air)
+    "JA": ("Jet\nSMART", (228, 0, 43)),  # JetSMART (was BH Airlines)
+    "9P": ("Fly\nJinnah", (200, 16, 46)),  # Fly Jinnah (was Air Arabia art)
+    "ZT": ("TITAN", (40, 60, 120)),  # Titan Airways (was Eastar Jet)
+    "AN": ("ADV\nAIR", (43, 108, 176)),  # Advanced Air (was HOP! art)
+    "CO": ("Cont'l", (16, 54, 125)),  # Continental (upstream name; was Cobalt art)
+    "G7": ("GoJet", (31, 78, 156)),  # GoJet Airlines (was KAPO art)
     "EG": ("Aer\nLingus", (0, 132, 61)),  # Aer Lingus UK (was Ellinair art)
-    "AL": ("TAE", (150, 158, 166)),       # TAE Avia (was Malta Air art)
-    "BF": ("Aero", (150, 158, 166)),      # Aero-Service (was frenchbee art)
-    "FN": ("RAL", (150, 158, 166)),       # Regional Air Lines (was fastjet art)
+    "AL": ("TAE", (150, 158, 166)),  # TAE Avia (was Malta Air art)
+    "BF": ("Aero", (150, 158, 166)),  # Aero-Service (was frenchbee art)
+    "FN": ("RAL", (150, 158, 166)),  # Regional Air Lines (was fastjet art)
     # micro-glyph carriers whose source mark won't isolate to a clean emblem:
     "JY": ("inter\nCarib", (0, 150, 160)),  # InterCaribbean Airways
-    "TJ": ("Trade\nwind", (30, 60, 110)),   # Tradewind Aviation
+    "TJ": ("Trade\nwind", (30, 60, 110)),  # Tradewind Aviation
     # faint wordmarks brightness can't rescue and with no emblem to crop:
-    "4B": ("Boutiq\nAir", (40, 80, 150)),   # Boutique Air
-    "7G": ("STAR\nFLYER", (220, 220, 225)), # Star Flyer (real logo is black -> unusable on a black panel)
+    "4B": ("Boutiq\nAir", (40, 80, 150)),  # Boutique Air
+    "7G": (
+        "STAR\nFLYER",
+        (220, 220, 225),
+    ),  # Star Flyer (real logo is black -> unusable on a black panel)
 }
 
 # Bold-font search path for the manual text tiles, first hit wins; falls back to
@@ -233,21 +340,46 @@ def _composite_logo(logo: Image.Image) -> Image.Image:
     return canvas.convert("RGB")
 
 
-def _scale_rgb565_channel(channel: int, brightness: int) -> int:
-    return (channel * brightness + 127) // 255
+def _dither_channel(channel: int, brightness: int, x: int, y: int) -> int:
+    levels = (1 << DISPLAY_BIT_DEPTH) - 1
+    denominator = 255 * 255
+    scaled = channel * brightness * levels
+    level, remainder = divmod(scaled, denominator)
+    threshold = BAYER_8X8[(y % 8) * 8 + (x % 8)]
+    if level < levels and remainder * 128 > (threshold * 2 + 1) * denominator:
+        level += 1
+    return (level * 255 + levels // 2) // levels
 
 
-def _runtime_pixel(pixel: int) -> int:
-    red = _scale_rgb565_channel((pixel >> 11) & 0x1F, DISPLAY_BRIGHTNESS)
-    green = _scale_rgb565_channel((pixel >> 5) & 0x3F, DISPLAY_BRIGHTNESS)
-    blue = _scale_rgb565_channel(pixel & 0x1F, DISPLAY_BRIGHTNESS)
-    return (red << 11) | (green << 5) | blue
+def _runtime_pixel(pixel: int, x: int, y: int) -> int:
+    red = _dither_channel(
+        ((pixel >> 11) & 0x1F) * 255 // 31,
+        DISPLAY_BRIGHTNESS,
+        x,
+        y,
+    )
+    green = _dither_channel(
+        ((pixel >> 5) & 0x3F) * 255 // 63,
+        DISPLAY_BRIGHTNESS,
+        x,
+        y,
+    )
+    blue = _dither_channel(
+        (pixel & 0x1F) * 255 // 31,
+        DISPLAY_BRIGHTNESS,
+        x,
+        y,
+    )
+    return ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3)
 
 
 def _runtime_visible_pixels(image: Image.Image) -> int:
     encoded = rgb565_bytes(image)
     pixels = struct.iter_unpack("<H", encoded)
-    return sum(_runtime_pixel(pixel[0]) != 0 for pixel in pixels)
+    return sum(
+        _runtime_pixel(pixel[0], index % LOGO_WIDTH, index // LOGO_WIDTH) != 0
+        for index, pixel in enumerate(pixels)
+    )
 
 
 def _load_bold_font(size: int) -> ImageFont.ImageFont:
@@ -261,7 +393,9 @@ def _load_bold_font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def render_text_logo(text: str, color: tuple[int, int, int]) -> tuple[Image.Image, bool]:
+def render_text_logo(
+    text: str, color: tuple[int, int, int]
+) -> tuple[Image.Image, bool]:
     """Render a plain-text brand wordmark identification tile to a logo cell.
 
     For MANUAL_LOGO_LABELS carriers only: draws the airline's name in its
@@ -324,7 +458,10 @@ def render_logo(
     logo = _fit_to_logo_cell(logo)
 
     canvas = _composite_logo(logo)
-    if not brightness_boost and _runtime_visible_pixels(canvas) >= MIN_RUNTIME_VISIBLE_PIXELS:
+    if (
+        not brightness_boost
+        and _runtime_visible_pixels(canvas) >= MIN_RUNTIME_VISIBLE_PIXELS
+    ):
         return canvas, False
 
     lifted_logo = _apply_brightness_floor(
@@ -341,11 +478,7 @@ def rgb565_bytes(image: Image.Image) -> bytes:
     for y in range(height):
         for x in range(width):
             red, green, blue = pixels[x, y]
-            pixel = (
-                ((red & 0xF8) << 8) |
-                ((green & 0xFC) << 3) |
-                (blue >> 3)
-            )
+            pixel = ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3)
             encoded.extend(struct.pack("<H", pixel))
     return bytes(encoded)
 
@@ -513,7 +646,9 @@ String AirlineLogoLibrary::findIataByIcao(const String &icao)
     )
 
 
-def _airlines_by_iata(airlines: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+def _airlines_by_iata(
+    airlines: list[dict[str, object]],
+) -> dict[str, dict[str, object]]:
     result: dict[str, dict[str, object]] = {}
     icao_codes: set[str] = set()
     for airline in airlines:
@@ -567,9 +702,7 @@ def _validate_logo(iata: str, canvas: Image.Image) -> None:
 
     visible_pixels = _runtime_visible_pixels(canvas)
     if visible_pixels < MIN_RUNTIME_VISIBLE_PIXELS:
-        raise ValueError(
-            f"only {visible_pixels} pixels survive runtime brightness"
-        )
+        raise ValueError(f"only {visible_pixels} pixels survive runtime brightness")
 
     pixels = canvas.load()
     colors = [
@@ -579,13 +712,11 @@ def _validate_logo(iata: str, canvas: Image.Image) -> None:
         if pixels[x, y] != (0, 0, 0)
     ]
     if iata == "QR" and not any(
-        red >= 80 and red > blue and blue > green
-        for red, green, blue in colors
+        red >= 80 and red > blue and blue > green for red, green, blue in colors
     ):
         raise ValueError("Qatar logo is missing its burgundy color family")
     if iata == "VS" and not any(
-        red >= 180 and red > green * 3 and red > blue * 2
-        for red, green, blue in colors
+        red >= 180 and red > green * 3 and red > blue * 2 for red, green, blue in colors
     ):
         raise ValueError("Virgin logo is missing its red color family")
 
@@ -593,9 +724,7 @@ def _validate_logo(iata: str, canvas: Image.Image) -> None:
 def main() -> None:
     ASSET_DIRECTORY.mkdir(parents=True, exist_ok=True)
     airlines = json.loads(download(f"{SOURCE_ROOT}/airlines.json"))
-    curated_airlines = json.loads(
-        download(f"{CURATED_SOURCE_ROOT}/airlines.json")
-    )
+    curated_airlines = json.loads(download(f"{CURATED_SOURCE_ROOT}/airlines.json"))
     curated_slugs = {
         airline["iata"].upper(): airline["slug"]
         for airline in curated_airlines
@@ -637,8 +766,7 @@ def main() -> None:
 
     if failures:
         raise RuntimeError(
-            f"failed to generate {len(failures)} logos:\n"
-            + "\n".join(failures)
+            f"failed to generate {len(failures)} logos:\n" + "\n".join(failures)
         )
     if len(logo_data) != EXPECTED_LOGO_COUNT * BYTES_PER_LOGO:
         raise RuntimeError(f"unexpected library size {len(logo_data)}")
